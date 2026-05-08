@@ -2,16 +2,20 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
-import os
 import json
 import re
 from datetime import datetime
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-import time
+import asyncio
 
 load_dotenv()
+
+# ─────────────────────────────────────────────
+# Client — instantiated once at startup
+# ─────────────────────────────────────────────
+client = genai.Client()
 
 app = FastAPI(title="SYS.JOB_AGENT_API", version="1.0")
 
@@ -54,46 +58,33 @@ class GenerateRequest(BaseModel):
 # ─────────────────────────────────────────────
 
 def clean_json_response(raw: str) -> str:
-    """
-    Strips markdown fences, inline citations, and stray whitespace
-    from a raw AI response before JSON parsing.
-    """
     raw = raw.strip()
-
-    # Strip ```json ... ``` or ``` ... ``` fences
     fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw)
     if fence_match:
         raw = fence_match.group(1).strip()
-
-    # Remove inline citations like [1], [12], etc.
     raw = re.sub(r"\[\d+\]", "", raw)
-
-    # Remove stray trailing commas before ] or } (common AI mistake)
     raw = re.sub(r",\s*(\]|})", r"\1", raw)
-
     return raw.strip()
 
 
 # ─────────────────────────────────────────────
-# Utility: Retry with Exponential Backoff
+# Utility: Async Retry with Exponential Backoff
 # ─────────────────────────────────────────────
 
-def call_with_retry(client, model: str, contents, config=None, max_retries: int = 3):
-    """
-    Calls generate_content with exponential backoff on 429 RESOURCE_EXHAUSTED.
-    """
+async def call_with_retry(model: str, contents, config=None, max_retries: int = 3):
     for attempt in range(max_retries):
         try:
-            kwargs = {"model": model, "contents": contents}
-            if config:
-                kwargs["config"] = config
-            return client.models.generate_content(**kwargs)
+            return client.models.generate_content(
+                model=model,
+                contents=contents,
+                config=config
+            )
         except Exception as e:
             error_str = str(e)
             if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
-                wait = 60 * (2 ** attempt)  # 60s, 120s, 240s
+                wait = 60 * (2 ** attempt)
                 print(f"[RATE LIMIT] Attempt {attempt + 1}/{max_retries}. Waiting {wait}s...")
-                time.sleep(wait)
+                await asyncio.sleep(wait)
             else:
                 raise
     raise Exception("Max retries exceeded. Quota still exhausted.")
@@ -114,7 +105,6 @@ async def search_jobs(request: SearchRequest):
     cleaned = ""
 
     try:
-        client = genai.Client(http_options={'api_version': 'v1'})
         current_date = datetime.now().strftime("%B %d, %Y")
 
         prompt = f"""
@@ -145,8 +135,7 @@ async def search_jobs(request: SearchRequest):
         }}]
         """
 
-        response = call_with_retry(
-            client,
+        response = await call_with_retry(
             model="gemini-2.5-flash",
             contents=prompt,
             config=types.GenerateContentConfig(
@@ -178,7 +167,6 @@ async def generate_cover_letter(request: GenerateRequest):
     print(f"> Generating tailored cover letter for: {request.job.title} @ {request.job.company}")
 
     try:
-        client = genai.Client(http_options={'api_version': 'v1'})
         current_date = datetime.now().strftime("%B %d, %Y")
 
         prompt = f"""
@@ -217,20 +205,13 @@ async def generate_cover_letter(request: GenerateRequest):
         === LETTER DIRECTIVES ===
         - HEADER: Open with a formal header: candidate name + full contact block, then today's date ({current_date}), then employer details if available, then greeting.
         - TONE: Sleek, confident, technically precise, direct. Never desperate or sycophantic.
-        - STRATEGY: Identify the 2-3 core technical needs in the job description. Map them explicitly to tINFO:     127.0.0.1:48374 - "OPTIONS /api/search HTTP/1.1" 200 OK
-> Tactical Extraction for: location:Morocco in Morocco
-[RATE LIMIT] Attempt 1/3. Waiting 60s...
-[RATE LIMIT] Attempt 2/3. Waiting 120s...
-[RATE LIMIT] Attempt 3/3. Waiting 240s...
-CRITICAL ERROR: Max retries exceeded. Quota still exhausted.
-INFO:     127.0.0.1:48380 - "POST /api/search HTTP/1.1" 200 OKhe candidate's profile. Emphasize the rare bridge between rigorous mathematical theory (stochastic analysis, RL) and production engineering (C#, Python).
+        - STRATEGY: Identify the 2-3 core technical needs in the job description. Map them explicitly to the candidate's profile. Emphasize the rare bridge between rigorous mathematical theory (stochastic analysis, RL) and production engineering (C#, Python).
         - DIFFERENTIATION: The Neural Volatility Calibration Engine and DRL-for-TSP are primary differentiators — use them strategically, not decoratively.
         - AVOID: Fluffy openers ("I am excited to apply..."), generic jargon, repetitive phrasing.
         - OUTPUT FORMAT: Return ONLY the final letter text. No markdown, no code fences, no commentary.
         """
 
-        response = call_with_retry(
-            client,
+        response = await call_with_retry(
             model="gemini-2.5-flash",
             contents=prompt,
             config=types.GenerateContentConfig(
