@@ -1,0 +1,13 @@
+# Ignore all environment files
+.env
+backend/.env
+
+# Ignore the virtual environment inside the backend folder
+backend/venv/
+
+# Ignore Python cache
+backend/__pycache__/
+__pycache__/
+
+# Ignore VS Code settings
+.vscode/

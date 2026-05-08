@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Job Agent | Abdellah's Terminal</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        navy: '#0b1120',
+                        charcoal: '#111827',
+                        panel: '#1f2937',
+                        teal: '#06b6d4',
+                        'teal-glow': '#22d3ee'
+                    },
+                    fontFamily: {
+                        mono: ['"Fira Code"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background-color: #0b1120; color: #f3f4f6; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #111827; }
+        ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #06b6d4; }
+        .glass-panel { background: rgba(31, 41, 55, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(55, 65, 81, 0.5); }
+        .glow-text { text-shadow: 0 0 8px rgba(6, 182, 212, 0.5); }
+    </style>
+</head>
+<body class="font-mono h-screen flex flex-col overflow-hidden text-sm">
+    <div id="root" class="h-full flex flex-col"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // --- Mock Data: Abdellah's Profile ---
+        // --- Updated Profile from Resume ---
+const userProfile = {
+    name: "Abdellah Kahlaoui",
+    title: "Quant Analyst & AI Engineer | Applied Mathematician",
+    location: "Casablanca, Morocco",
+    // We've prioritized your strongest mathematical and engineering keywords
+    skills: [
+        "Stochastic Calculus", 
+        "Deep Reinforcement Learning", 
+        "Monte Carlo Methods", 
+        "Python (PyTorch/NumPy)", 
+        "C# (.NET)", 
+        "SQL & ETL", 
+        "Algorithmic Optimization",
+        "Financial Modeling",
+        "LaTeX"
+    ],
+    experience: "Specializing in DRL for combinatorial optimization and neural volatility calibration engines."
+};
+
+        const App = () => {
+            const [searchQuery, setSearchQuery] = useState("location:Morocco");
+            const [isSearching, setIsSearching] = useState(false);
+            const [jobs, setJobs] = useState([]);
+            const [selectedJob, setSelectedJob] = useState(null);
+            const [isGenerating, setIsGenerating] = useState(false);
+            const [generatedAssets, setGeneratedAssets] = useState({});
+
+            // Simulate Gemini Web Search API Call
+            // --- Real Backend Connections ---
+
+const handleSearch = async () => {
+    setIsSearching(true);
+    setJobs([]);
+    setSelectedJob(null);
+    
+    try {
+        const response = await fetch('http://127.0.0.1:8000/api/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: searchQuery, location: "Morocco" })
+        });
+        
+        const data = await response.json();
+        
+        if (data.status === "success") {
+            setJobs(data.results);
+        } else {
+            console.error("Search failed:", data.message);
+            alert("Error during AI Search. Check console.");
+        }
+    } catch (error) {
+        console.error("Network error:", error);
+    } finally {
+        setIsSearching(false);
+    }
+};
+
+const handleGenerate = async (job) => {
+    setSelectedJob(job);
+    setIsGenerating(true);
+    
+    try {
+        const response = await fetch('http://127.0.0.1:8000/api/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                job: job, 
+                profile: userProfile 
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.status === "success") {
+            setGeneratedAssets(prev => ({
+                ...prev,
+                [job.id]: data.asset
+            }));
+        }
+    } catch (error) {
+        console.error("Network error:", error);
+    } finally {
+        setIsGenerating(false);
+    }
+};
+
+            const copyToClipboard = (text) => {
+                navigator.clipboard.writeText(text);
+                alert("Copied to clipboard!"); // In a real app, use a sleek toast notification
+            };
+
+            return (
+                <div className="flex h-full w-full bg-navy p-4 gap-4">
+                    
+                    {/* Left Sidebar: Profile & Config */}
+                    <div className="w-1/4 glass-panel rounded-lg p-5 flex flex-col">
+                        <div className="mb-6">
+                            <h1 className="text-teal text-xl font-bold glow-text mb-1">SYS.JOB_AGENT_v1.0</h1>
+                            <p className="text-gray-400 text-xs">Status: <span className="text-green-400">ONLINE</span></p>
+                        </div>
+                        
+                        <div className="mb-6 border-t border-gray-700 pt-4">
+                            <h2 className="text-gray-300 uppercase text-xs font-bold mb-3 tracking-wider">Loaded Profile</h2>
+                            <div className="bg-charcoal p-3 rounded border border-gray-700">
+                                <p className="text-white font-bold">{userProfile.name}</p>
+                                <p className="text-teal text-xs mb-2">{userProfile.title}</p>
+                                <div className="flex flex-wrap gap-1 mt-2">
+                                    {userProfile.skills.map(skill => (
+                                        <span key={skill} className="bg-gray-800 text-gray-300 text-[10px] px-2 py-1 rounded border border-gray-600">
+                                            {skill}
+                                        </span>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="mt-auto">
+                            <p className="text-xs text-gray-500">Gemini Web Search API: <span className="text-teal">CONNECTED</span></p>
+                        </div>
+                    </div>
+
+                    {/* Middle Panel: Search & Results */}
+                    <div className="w-1/3 glass-panel rounded-lg p-5 flex flex-col">
+                        <div className="mb-4">
+                            <label className="text-teal uppercase text-xs font-bold mb-2 block">Search Parameters</label>
+                            <textarea 
+                                className="w-full bg-charcoal border border-gray-700 rounded p-2 text-gray-200 focus:border-teal focus:outline-none resize-none"
+                                rows="2"
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                            />
+                            <button 
+                                onClick={handleSearch}
+                                disabled={isSearching}
+                                className="w-full mt-2 bg-teal hover:bg-teal-glow text-navy font-bold py-2 rounded transition-colors"
+                            >
+                                {isSearching ? "> INITIATING SEARCH..." : "> EXECUTE SEARCH"}
+                            </button>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto pr-2">
+                            <h2 className="text-gray-300 uppercase text-xs font-bold mb-3 tracking-wider">Identified Targets</h2>
+                            
+                            {jobs.length === 0 && !isSearching && (
+                                <p className="text-gray-500 italic text-center mt-10">Awaiting execution...</p>
+                            )}
+
+                            {jobs.map(job => (
+                                <div 
+                                    key={job.id} 
+                                    className={`mb-3 p-4 rounded border cursor-pointer transition-colors ${selectedJob?.id === job.id ? 'bg-gray-800 border-teal' : 'bg-charcoal border-gray-700 hover:border-gray-500'}`}
+                                    onClick={() => handleGenerate(job)}
+                                >
+                                    <div className="flex justify-between items-start mb-1">
+                                        <h3 className="text-white font-bold">{job.title}</h3>
+                                        <span className={`text-xs px-2 py-1 rounded font-bold ${job.match >= 90 ? 'bg-green-900 text-green-400' : 'bg-yellow-900 text-yellow-400'}`}>
+                                            {job.match}% MATCH
+                                        </span>
+                                    </div>
+                                    <p className="text-teal text-xs mb-2">{job.company} // {job.location}</p>
+                                    <p className="text-gray-400 text-xs line-clamp-2 mb-2">{job.desc}</p>
+                                    
+                                    {/* NEW: Clickable URL Link */}
+                                    {job.url && (
+                                        <a 
+                                            href={job.url} 
+                                            target="_blank" 
+                                            rel="noopener noreferrer" 
+                                            className="text-teal-glow hover:text-white text-[10px] uppercase tracking-widest border-b border-transparent hover:border-white transition-colors"
+                                            onClick={(e) => e.stopPropagation()} 
+                                        >
+                                            [ Initialize Deployment // View Source ]
+                                        </a>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Right Panel: Cover Letter / Action Generation */}
+                    <div className="flex-1 glass-panel rounded-lg p-5 flex flex-col">
+                        <h2 className="text-teal uppercase text-xs font-bold mb-3 tracking-wider flex justify-between">
+                            <span>Generated Assets</span>
+                            {selectedJob && <span>TARGET: {selectedJob.company}</span>}
+                        </h2>
+                        
+                        <div className="flex-1 bg-charcoal border border-gray-700 rounded p-4 overflow-y-auto relative">
+                            {!selectedJob ? (
+                                <div className="h-full flex items-center justify-center text-gray-600">
+                                    Select a target to generate tailored application materials.
+                                </div>
+                            ) : isGenerating ? (
+                                <div className="h-full flex flex-col items-center justify-center text-teal">
+                                    <div className="animate-pulse mb-2">██████████████████</div>
+                                    <p>> Synthesizing CV with job requirements...</p>
+                                    <p>> Running Gemini LLM optimization...</p>
+                                </div>
+                            ) : (
+                                <div className="text-gray-300 whitespace-pre-wrap leading-relaxed">
+                                    {generatedAssets[selectedJob.id]}
+                                    
+                                    <button 
+                                        onClick={() => copyToClipboard(generatedAssets[selectedJob.id])}
+                                        className="absolute top-4 right-4 bg-gray-800 hover:bg-gray-700 text-teal border border-teal px-3 py-1 rounded text-xs transition-colors"
+                                    >
+                                        [ COPY TO CLIPBOARD ]
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
