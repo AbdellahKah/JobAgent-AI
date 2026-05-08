@@ -50,69 +50,69 @@ async def root():
 
 @app.post("/api/search")
 async def search_jobs(request: SearchRequest):
-    print(f"> Executing AI Search for: {request.query} in {request.location}")
-    
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        return {"status": "error", "message": "API key missing. Check your .env file."}
+    print(f"> Tactical Extraction for: {request.query} in {request.location}")
     
     try:
         client = genai.Client()
         current_date = datetime.now().strftime("%B %d, %Y")
         
         prompt = f"""
-        You are a highly precise technical recruiter agent. Today is {current_date}. 
-        You MUST use the Google Search tool to find REAL job openings for: '{request.query}' in '{request.location}'. 
+        Today is {current_date}. Search the web for CURRENT job openings in Morocco for: '{request.query}'.
         
-        CRITICAL URL PROTOCOL:
-        1. For each job, you MUST extract the raw, full URL directly from the search result's metadata.
-        2. DO NOT "clean," shorten, or rewrite the URL. If the link is long and complex, keep it EXACTLY as provided by the search tool.
-        3. If a result does not have a direct link to the job posting, DISCARD IT.
+        TARGET ROLES: Focus on Applied Mathematics, Quantitative Finance, AI Engineering, and Software Development (C#).
         
-        FILTERS:
-        - Posted within the last 3 months from {current_date}.
-        - Must be in Morocco and still active.
+        INSTRUCTIONS:
+        - Use Google Search to find real, active listings from Rekrute, LinkedIn, or official career sites.
+        - DO NOT include citations or footnotes (like [1]). 
+        - DO NOT include any conversational text.
+        - Return ONLY a raw JSON array.
         
-        Output ONLY a raw JSON array of objects with these keys:
-        "id": (unique int),
-        "title": "Exact Title",
-        "company": "Company Name",
-        "location": "City, Morocco",
-        "match": (match % vs Abdellah's profile),
-        "desc": "2-sentence summary + posting date.",
-        "url": "THE RAW UNTOUCHED LINK"
+        JSON Structure:
+        [{{
+            "id": int,
+            "title": "Job Title",
+            "company": "Company",
+            "location": "City, Morocco",
+            "match": int,
+            "desc": "A 2-sentence technical summary including the posting date.",
+            "url": "Direct link to application"
+        }}]
         """
 
         response = client.models.generate_content(
             model='gemini-2.5-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
-                temperature=0.7,
+                temperature=0.2, # Low temperature for strictness
                 tools=[types.Tool(google_search=types.GoogleSearch())] 
             )
         )
         
+        # --- ROBUST JSON CLEANING ---
         raw_text = response.text.strip()
-        if raw_text.startswith("```json"):
-            raw_text = raw_text[7:]
-        if raw_text.startswith("```"):
-            raw_text = raw_text[3:]
-        if raw_text.endswith("```"):
-            raw_text = raw_text[:-3]
+        print(f"DEBUG - Raw AI Output: {raw_text[:200]}...") # See the start of the output in your terminal
+
+        # Remove markdown backticks if they exist
+        if "```" in raw_text:
+            raw_text = raw_text.split("```")[1]
+            if raw_text.startswith("json"):
+                raw_text = raw_text[4:]
         
+        # Remove common AI citations that break JSON
+        import re
+        raw_text = re.sub(r'\[\d+\]', '', raw_text) 
+
         jobs_data = json.loads(raw_text.strip())
-        
-        # MATH SORT: Force the array to sort by 'match' descending (highest match at the top)
         jobs_data.sort(key=lambda x: x.get("match", 0), reverse=True)
         
-        return {
-            "status": "success",
-            "results": jobs_data
-        }
+        return {"status": "success", "results": jobs_data}
 
     except Exception as e:
-        print(f"Error during AI search: {e}")
-        return {"status": "error", "message": str(e)}
+        print(f"CRITICAL ERROR: {e}")
+        return {"status": "error", "message": "Failed to parse search results. Try again."}
+
+
+        
 
 @app.post("/api/generate")
 async def generate_cover_letter(request: GenerateRequest):
