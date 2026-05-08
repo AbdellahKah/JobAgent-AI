@@ -4,10 +4,12 @@ from pydantic import BaseModel
 import uvicorn
 import os
 import json
+import re
 from datetime import datetime
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+import time
 
 load_dotenv()
 
@@ -15,13 +17,17 @@ app = FastAPI(title="SYS.JOB_AGENT_API", version="1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- Data Models ---
+
+# ─────────────────────────────────────────────
+# Data Models
+# ─────────────────────────────────────────────
+
 class SearchRequest(BaseModel):
     query: str
     location: str = "Morocco"
@@ -31,7 +37,7 @@ class JobTarget(BaseModel):
     title: str
     company: str
     desc: str
-    url: str = "" # Added URL field
+    url: str = ""
 
 class ProfileData(BaseModel):
     name: str
@@ -42,135 +48,207 @@ class GenerateRequest(BaseModel):
     job: JobTarget
     profile: ProfileData
 
-# --- Endpoints ---
+
+# ─────────────────────────────────────────────
+# Utility: Robust JSON Cleaner
+# ─────────────────────────────────────────────
+
+def clean_json_response(raw: str) -> str:
+    """
+    Strips markdown fences, inline citations, and stray whitespace
+    from a raw AI response before JSON parsing.
+    """
+    raw = raw.strip()
+
+    # Strip ```json ... ``` or ``` ... ``` fences
+    fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw)
+    if fence_match:
+        raw = fence_match.group(1).strip()
+
+    # Remove inline citations like [1], [12], etc.
+    raw = re.sub(r"\[\d+\]", "", raw)
+
+    # Remove stray trailing commas before ] or } (common AI mistake)
+    raw = re.sub(r",\s*(\]|})", r"\1", raw)
+
+    return raw.strip()
+
+
+# ─────────────────────────────────────────────
+# Utility: Retry with Exponential Backoff
+# ─────────────────────────────────────────────
+
+def call_with_retry(client, model: str, contents, config=None, max_retries: int = 3):
+    """
+    Calls generate_content with exponential backoff on 429 RESOURCE_EXHAUSTED.
+    """
+    for attempt in range(max_retries):
+        try:
+            kwargs = {"model": model, "contents": contents}
+            if config:
+                kwargs["config"] = config
+            return client.models.generate_content(**kwargs)
+        except Exception as e:
+            error_str = str(e)
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+                wait = 60 * (2 ** attempt)  # 60s, 120s, 240s
+                print(f"[RATE LIMIT] Attempt {attempt + 1}/{max_retries}. Waiting {wait}s...")
+                time.sleep(wait)
+            else:
+                raise
+    raise Exception("Max retries exceeded. Quota still exhausted.")
+
+
+# ─────────────────────────────────────────────
+# Endpoints
+# ─────────────────────────────────────────────
 
 @app.get("/")
 async def root():
     return {"status": "ONLINE", "system": "Job Agent API v1.0"}
 
+
 @app.post("/api/search")
 async def search_jobs(request: SearchRequest):
     print(f"> Tactical Extraction for: {request.query} in {request.location}")
-    
+    cleaned = ""
+
     try:
-        client = genai.Client()
+        client = genai.Client(http_options={'api_version': 'v1'})
         current_date = datetime.now().strftime("%B %d, %Y")
-        
+
         prompt = f"""
         Today is {current_date}. Search the web for CURRENT job openings in Morocco for: '{request.query}'.
-        
-        TARGET ROLES: Focus on Applied Mathematics, Quantitative Finance, AI Engineering, and Software Development (C#).
-        
-        INSTRUCTIONS:
-        - Use Google Search to find real, active listings from Rekrute, LinkedIn, or official career sites.
-        - DO NOT include citations or footnotes (like [1]). 
-        - DO NOT include any conversational text.
-        - Return ONLY a raw JSON array.
-        
-        JSON Structure:
+
+        TARGET ROLES: Applied Mathematics, Quantitative Finance, AI Engineering, Software Development (C#/.NET).
+
+        === STRICT URL PROTOCOL (CRITICAL) ===
+        - You MUST only include URLs that you directly found in the Google Search results.
+        - COPY-PASTE the URL exactly as it appeared in the search result. Do NOT construct, guess, or modify any URL.
+        - If you cannot find a direct, verified URL for a listing, set "url" to an empty string "".
+        - NEVER fabricate or reconstruct a URL. A missing URL is acceptable. A hallucinated URL is not.
+
+        === OUTPUT RULES ===
+        - Return ONLY a raw JSON array. No preamble, no explanation, no markdown fences.
+        - Do NOT include citations or footnotes (e.g. [1], [2]).
+        - Do NOT include any conversational text outside the JSON.
+
+        JSON Structure (one object per job):
         [{{
-            "id": int,
-            "title": "Job Title",
-            "company": "Company",
+            "id": <integer starting at 1>,
+            "title": "Exact Job Title from listing",
+            "company": "Company Name",
             "location": "City, Morocco",
-            "match": int,
-            "desc": "A 2-sentence technical summary including the posting date.",
-            "url": "Direct link to application"
+            "match": <integer 0-100 relevance score>,
+            "desc": "2-sentence technical summary of the role including the posting date if visible.",
+            "url": "Copy-pasted URL from search result, or empty string if not found"
         }}]
         """
 
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
+        response = call_with_retry(
+            client,
+            model="gemini-2.5-flash",
             contents=prompt,
             config=types.GenerateContentConfig(
-                temperature=0.2, # Low temperature for strictness
-                tools=[types.Tool(google_search=types.GoogleSearch())] 
+                temperature=0.0,
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+                tools=[types.Tool(google_search=types.GoogleSearch())]
             )
         )
-        
-        # --- ROBUST JSON CLEANING ---
-        raw_text = response.text.strip()
-        print(f"DEBUG - Raw AI Output: {raw_text[:200]}...") # See the start of the output in your terminal
 
-        # Remove markdown backticks if they exist
-        if "```" in raw_text:
-            raw_text = raw_text.split("```")[1]
-            if raw_text.startswith("json"):
-                raw_text = raw_text[4:]
-        
-        # Remove common AI citations that break JSON
-        import re
-        raw_text = re.sub(r'\[\d+\]', '', raw_text) 
+        raw_text = response.text
+        print(f"DEBUG - Raw AI Output (first 300 chars): {raw_text[:300]}")
 
-        jobs_data = json.loads(raw_text.strip())
+        cleaned = clean_json_response(raw_text)
+        jobs_data = json.loads(cleaned)
         jobs_data.sort(key=lambda x: x.get("match", 0), reverse=True)
-        
+
         return {"status": "success", "results": jobs_data}
 
+    except json.JSONDecodeError as e:
+        print(f"JSON PARSE ERROR: {e}\nCleaned text was: {cleaned}")
+        return {"status": "error", "message": "AI returned malformed JSON. Please retry."}
     except Exception as e:
         print(f"CRITICAL ERROR: {e}")
-        return {"status": "error", "message": "Failed to parse search results. Try again."}
+        return {"status": "error", "message": str(e)}
 
-
-        
 
 @app.post("/api/generate")
 async def generate_cover_letter(request: GenerateRequest):
-    print(f"> Generating AI tailored assets for: {request.job.company}")
-    
+    print(f"> Generating tailored cover letter for: {request.job.title} @ {request.job.company}")
+
     try:
-        client = genai.Client()
+        client = genai.Client(http_options={'api_version': 'v1'})
         current_date = datetime.now().strftime("%B %d, %Y")
-        
+
         prompt = f"""
         Write a highly professional, concise, and compelling cover letter for the position of {request.job.title} at {request.job.company}.
-        
-        Job Description: {request.job.desc}
-        
-        Candidate Profile (Use these specific details to aggressively tailor the letter to the job description):
-        - Name: Abdellah Kahlaoui
-        - Contact Information:
-            - Location: Casablanca, Morocco
-            - Email: kahlaouiabdellah6@gmail.com
-            - Phone: +212724458783
-            - LinkedIn: [linkedin.com/in/kahabdu1808
-            - GitHub: github.com/AbdellahKah/AbdellahKah
-        - Target Role: Applied Mathematician, Quantitative Analyst, and AI Engineer
-        - Education: Master of Applied Mathematics from FST Settat (Focus: Stochastic Calculus, Statistical Learning, Numerical Optimization, Time Series).
-        - Tech Stack: Python (NumPy, PyTorch, Pandas, Scikit-learn), C#, SQL, MATLAB, Git, Power BI.
-        - Enterprise Experience: 6-month Data Analyst & Full Stack Intern at Safran. Built scalable C# desktop apps/REST APIs and engineered SQL-to-Power BI ETL pipelines that reduced latency.
-        - Advanced Projects: 
-            1. Designed a Deep Reinforcement Learning (DRL) agent in PyTorch to solve combinatorial optimization (TSP).
-            2. Built a Neural Network Stochastic Volatility Calibration Engine (Heston & SABR models) achieving 1000x inference speedup over classical methods using Monte Carlo simulations.
-        - Languages: Bilingual (French Native, English C1).
 
-        Directives for the Letter:
-        - Header formatting: You MUST start the letter with a formal, professional header containing the candidate's name and all Contact Information provided above. Below that, include today's date ({current_date}), followed by the employer's details (if available), and then the greeting.
-        - Tone: Sleek, confident, highly technical, and direct. 
-        - Strategy: Identify the core needs in the Job Description and match them directly to the Candidate Profile. Emphasize the rare ability to bridge advanced mathematical theory (Stochastic analysis/RL) with production-level software engineering (C#/Python).
-        - Avoid: Overly fluffy language, desperate tones, generic corporate jargon, or repeating the exact same phrasing in every letter.
-        - Output Format: Return ONLY the final letter text. Do not include markdown blocks like ```text.
+        Job Description: {request.job.desc}
+
+        Candidate Profile — use every relevant detail below to aggressively tailor the letter:
+
+        NAME: Abdellah Kahlaoui
+        CONTACT:
+          - Location: Casablanca, Morocco
+          - Email: kahlaouiabdellah6@gmail.com
+          - Phone: +212724458783
+          - LinkedIn: linkedin.com/in/kahabdu1808
+          - GitHub: github.com/AbdellahKah/AbdellahKah
+
+        EDUCATION: M2 Applied Mathematics, FST Settat
+          — Core disciplines: Stochastic Calculus, Statistical Learning, Numerical Optimization, Time Series Analysis
+
+        TECH STACK: Python (NumPy, PyTorch, Pandas, Scikit-learn), C#/.NET, SQL, MATLAB, Git, Power BI
+
+        ENTERPRISE EXPERIENCE:
+          — 6-month internship at Safran as Data Analyst & Full-Stack Developer
+          — Delivered scalable C# desktop applications and REST APIs
+          — Engineered SQL-to-Power BI ETL pipelines with measurable latency reduction
+
+        SIGNATURE PROJECTS (always cite at least one when relevant):
+          1. Neural Volatility Calibration Engine: Neural network surrogate for Heston & SABR stochastic
+             volatility models. Achieved 1000x inference speedup over classical Monte Carlo methods.
+          2. DRL Agent for TSP: Deep Reinforcement Learning agent in PyTorch solving the Travelling
+             Salesman Problem (combinatorial optimization).
+
+        LANGUAGES: French (native), English (C1)
+
+        === LETTER DIRECTIVES ===
+        - HEADER: Open with a formal header: candidate name + full contact block, then today's date ({current_date}), then employer details if available, then greeting.
+        - TONE: Sleek, confident, technically precise, direct. Never desperate or sycophantic.
+        - STRATEGY: Identify the 2-3 core technical needs in the job description. Map them explicitly to tINFO:     127.0.0.1:48374 - "OPTIONS /api/search HTTP/1.1" 200 OK
+> Tactical Extraction for: location:Morocco in Morocco
+[RATE LIMIT] Attempt 1/3. Waiting 60s...
+[RATE LIMIT] Attempt 2/3. Waiting 120s...
+[RATE LIMIT] Attempt 3/3. Waiting 240s...
+CRITICAL ERROR: Max retries exceeded. Quota still exhausted.
+INFO:     127.0.0.1:48380 - "POST /api/search HTTP/1.1" 200 OKhe candidate's profile. Emphasize the rare bridge between rigorous mathematical theory (stochastic analysis, RL) and production engineering (C#, Python).
+        - DIFFERENTIATION: The Neural Volatility Calibration Engine and DRL-for-TSP are primary differentiators — use them strategically, not decoratively.
+        - AVOID: Fluffy openers ("I am excited to apply..."), generic jargon, repetitive phrasing.
+        - OUTPUT FORMAT: Return ONLY the final letter text. No markdown, no code fences, no commentary.
         """
 
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
+        response = call_with_retry(
+            client,
+            model="gemini-2.5-flash",
             contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.4,
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+            )
         )
-        
-        return {
-            "status": "success", 
-            "asset": response.text
-        }
+
+        return {"status": "success", "asset": response.text}
 
     except Exception as e:
-        print(f"Error during AI generation: {e}")
+        print(f"GENERATION ERROR: {e}")
         return {"status": "error", "message": str(e)}
 
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt,
-        )
-      
+
+# ─────────────────────────────────────────────
+# Entry Point
+# ─────────────────────────────────────────────
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
