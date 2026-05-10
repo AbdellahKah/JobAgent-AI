@@ -96,7 +96,7 @@ async def call_with_retry(model: str, contents, config=None, max_retries: int = 
 # ─────────────────────────────────────────────
 
 def is_valid_job_url(url: str) -> bool:
-    """Check if a URL is structurally valid and from a known job platform."""
+    """Check if a URL is structurally valid and NOT a Google grounding redirect."""
     if not url or url.strip() == "":
         return False
     try:
@@ -107,13 +107,15 @@ def is_valid_job_url(url: str) -> bool:
         # Must be http or https
         if parsed.scheme not in ("http", "https"):
             return False
-        # Reject obviously fake patterns (e.g. placeholder domains)
         domain = parsed.netloc.lower()
+        # Reject Google's grounding-api-redirect URLs (they expire and 404)
+        if "vertexaisearch.cloud.google.com" in domain:
+            return False
+        if "grounding-api-redirect" in url:
+            return False
+        # Reject obviously fake patterns
         if "example.com" in domain:
             return False
-        # Reject suspiciously short paths on job boards (likely fabricated IDs)
-        # e.g., linkedin.com/jobs/view/12345 where 12345 is made up
-        # We allow them through but flag - the real fix is the fallback
         return True
     except Exception:
         return False
@@ -144,7 +146,9 @@ async def search_jobs(request: SearchRequest):
         === STRICT URL PROTOCOL (CRITICAL) ===
         - You MUST only include URLs that you directly found in the Google Search results.
         - COPY-PASTE the URL exactly as it appeared in the search result. Do NOT construct, guess, or modify any URL.
-        - If you cannot find a direct, verified URL for a listing, set "url" to an empty string "".
+        - NEVER use vertexaisearch.cloud.google.com or grounding-api-redirect URLs. These are internal system URLs and NOT valid job links.
+        - Only include real destination URLs like linkedin.com, indeed.com, rekrute.com, emploi.ma, etc.
+        - If you cannot find a direct, verified destination URL for a listing, set "url" to an empty string "".
         - NEVER fabricate or reconstruct a URL. A missing URL is acceptable. A hallucinated URL is not.
 
         === OUTPUT RULES ===
