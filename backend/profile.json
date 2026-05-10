@@ -9,7 +9,12 @@
     "education": {
         "degree": "M2 Applied Mathematics",
         "school": "FST Settat",
-        "disciplines": ["Stochastic Calculus", "Statistical Learning", "Numerical Optimization", "Time Series Analysis"]
+        "disciplines": [
+            "Stochastic Calculus",
+            "Statistical Learning",
+            "Numerical Optimization",
+            "Time Series Analysis"
+        ]
     },
     "skills": [
         "Stochastic Calculus",
@@ -44,5 +49,9 @@
             "description": "Deep Reinforcement Learning agent in PyTorch solving the Travelling Salesman Problem (combinatorial optimization)."
         }
     ],
-    "languages": ["French (native)", "English (C1)"]
+    "languages": [
+        "Arabic (Native)",
+        "French (B2)",
+        "English (C1)"
+    ]
 }

@@ -8,6 +8,15 @@ backend/venv/
 # Ignore Python cache
 backend/__pycache__/
 __pycache__/
+*.py[cod]
+
 
 # Ignore VS Code settings
 .vscode/
+
+# Databases
+*.db
+*.sqlite3
+
+# Ignore profile.json if it contains real personal credentials
+# backend/profile.json
