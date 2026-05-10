@@ -13,6 +13,7 @@ from google.genai import types
 import asyncio
 
 import database as db
+from scrapers import scrape_all_platforms
 
 load_dotenv()
 
@@ -184,7 +185,8 @@ async def search_jobs(request: SearchRequest):
         }}]
         """
 
-        response = await call_with_retry(
+        # Run Gemini search and platform scrapers IN PARALLEL
+        gemini_task = call_with_retry(
             model="gemini-2.5-flash",
             contents=prompt,
             config=types.GenerateContentConfig(
@@ -193,44 +195,80 @@ async def search_jobs(request: SearchRequest):
                 tools=[types.Tool(google_search=types.GoogleSearch())]
             )
         )
+        scraper_task = scrape_all_platforms(request.query, request.location)
 
-        raw_text = response.text
-        print(f"DEBUG - Raw AI Output (first 300 chars): {raw_text[:300]}")
+        # Wait for both
+        gemini_response, scraped_jobs = await asyncio.gather(
+            gemini_task, scraper_task, return_exceptions=True
+        )
 
-        # Extract grounding URLs from search metadata if available
-        grounding_urls = []
-        try:
-            if hasattr(response, 'candidates') and response.candidates:
-                candidate = response.candidates[0]
-                grounding_meta = getattr(candidate, 'grounding_metadata', None)
-                if grounding_meta and hasattr(grounding_meta, 'grounding_chunks'):
-                    for chunk in grounding_meta.grounding_chunks:
-                        if hasattr(chunk, 'web') and chunk.web:
-                            grounding_urls.append(chunk.web.uri)
-        except Exception as e:
-            print(f"DEBUG - Could not extract grounding URLs: {e}")
+        # ─── Process Gemini results ───
+        jobs_data = []
+        if isinstance(gemini_response, Exception):
+            print(f"[GEMINI] Failed: {gemini_response}")
+        else:
+            raw_text = gemini_response.text
+            print(f"DEBUG - Raw AI Output (first 300 chars): {raw_text[:300]}")
 
-        print(f"DEBUG - Grounding URLs found: {grounding_urls}")
+            cleaned = clean_json_response(raw_text)
+            try:
+                jobs_data = json.loads(cleaned)
+            except json.JSONDecodeError as e:
+                print(f"JSON PARSE ERROR: {e}\nCleaned text was: {cleaned}")
 
-        cleaned = clean_json_response(raw_text)
-        jobs_data = json.loads(cleaned)
-
-        # Validate and fix URLs for each job
+        # Validate Gemini URLs
         for job in jobs_data:
             url = job.get("url", "")
-            if url:
-                # Validate the URL structure
-                if not is_valid_job_url(url):
-                    job["url"] = ""
+            if url and not is_valid_job_url(url):
+                job["url"] = ""
+            job["source"] = "gemini"
+            job["url_is_fallback"] = False
 
-            # If no valid URL, generate a Google Search fallback
+        # ─── Process scraped results ───
+        scraped_list = []
+        if isinstance(scraped_jobs, Exception):
+            print(f"[SCRAPERS] Failed: {scraped_jobs}")
+        else:
+            scraped_list = scraped_jobs if scraped_jobs else []
+
+        # ─── Merge: Try to match scraped URLs to Gemini jobs ───
+        # For Gemini jobs missing URLs, try to find a match from scrapers
+        for job in jobs_data:
             if not job.get("url"):
-                search_term = f"{job.get('title', '')} {job.get('company', '')} {job.get('location', 'Morocco')} job"
-                job["url"] = f"https://www.google.com/search?q={quote_plus(search_term)}"
-                job["url_is_fallback"] = True
-            else:
-                job["url_is_fallback"] = False
+                # Try to find a scraped job with matching title/company
+                matched = _find_scraper_match(job, scraped_list)
+                if matched:
+                    job["url"] = matched["url"]
+                    job["source"] = matched["source"]
+                    job["url_is_fallback"] = False
+                else:
+                    # Fallback to Google Search
+                    search_term = f"{job.get('title', '')} {job.get('company', '')} {job.get('location', 'Morocco')} job"
+                    job["url"] = f"https://www.google.com/search?q={quote_plus(search_term)}"
+                    job["url_is_fallback"] = True
 
+        # ─── Add scraped jobs not already in Gemini results ───
+        existing_titles = {(j.get("title", "").lower(), j.get("company", "").lower()) for j in jobs_data}
+        next_id = len(jobs_data) + 1
+
+        for scraped in scraped_list:
+            key = (scraped.get("title", "").lower(), scraped.get("company", "").lower())
+            if key not in existing_titles and scraped.get("url"):
+                existing_titles.add(key)
+                jobs_data.append({
+                    "id": next_id,
+                    "title": scraped["title"],
+                    "company": scraped.get("company", "Unknown"),
+                    "location": scraped.get("location", request.location),
+                    "match": 50,  # Default match score for scraped-only jobs
+                    "desc": scraped.get("desc", ""),
+                    "url": scraped["url"],
+                    "url_is_fallback": False,
+                    "source": scraped.get("source", "scraper"),
+                })
+                next_id += 1
+
+        # Sort: Gemini-scored jobs first, then scraped extras
         jobs_data.sort(key=lambda x: x.get("match", 0), reverse=True)
 
         # Flag jobs already saved in the database (deduplication)
@@ -251,6 +289,33 @@ async def search_jobs(request: SearchRequest):
     except Exception as e:
         print(f"CRITICAL ERROR: {e}")
         return {"status": "error", "message": str(e)}
+
+
+def _find_scraper_match(gemini_job: dict, scraped_jobs: list[dict]) -> dict | None:
+    """Try to find a scraped job that matches a Gemini result by title similarity."""
+    gemini_title = gemini_job.get("title", "").lower().strip()
+    gemini_company = gemini_job.get("company", "").lower().strip()
+
+    for scraped in scraped_jobs:
+        scraped_title = scraped.get("title", "").lower().strip()
+        scraped_company = scraped.get("company", "").lower().strip()
+
+        # Exact title match
+        if gemini_title == scraped_title:
+            return scraped
+
+        # Company match + title overlap (at least 3 words in common)
+        if gemini_company and gemini_company in scraped_title:
+            return scraped
+
+        # Fuzzy: check if key words from gemini title appear in scraped title
+        gemini_words = set(gemini_title.split())
+        scraped_words = set(scraped_title.split())
+        overlap = gemini_words & scraped_words
+        if len(overlap) >= 3 and (gemini_company == scraped_company or not gemini_company):
+            return scraped
+
+    return None
 
 
 @app.post("/api/generate")
