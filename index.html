@@ -513,12 +513,40 @@
                                     ) : (
                                         <div className="text-gray-300 whitespace-pre-wrap leading-relaxed text-xs">
                                             {generatedAssets[selectedJob.id]}
-                                            <button 
-                                                onClick={() => copyToClipboard(generatedAssets[selectedJob.id])}
-                                                className="absolute top-3 right-3 bg-gray-800 hover:bg-gray-700 text-teal border border-teal px-2 py-1 rounded text-[10px]"
-                                            >
-                                                COPY
-                                            </button>
+                                            <div className="absolute top-3 right-3 flex gap-2">
+                                                <button 
+                                                    onClick={() => copyToClipboard(generatedAssets[selectedJob.id])}
+                                                    className="bg-gray-800 hover:bg-gray-700 text-teal border border-teal px-2 py-1 rounded text-[10px]"
+                                                >
+                                                    COPY
+                                                </button>
+                                                <button 
+                                                    onClick={async () => {
+                                                        try {
+                                                            const res = await fetch(`${API_BASE}/api/export-pdf`, {
+                                                                method: 'POST',
+                                                                headers: { 'Content-Type': 'application/json' },
+                                                                body: JSON.stringify({
+                                                                    text: generatedAssets[selectedJob.id],
+                                                                    job_title: selectedJob.title,
+                                                                    company: selectedJob.company,
+                                                                })
+                                                            });
+                                                            const blob = await res.blob();
+                                                            const url = URL.createObjectURL(blob);
+                                                            const a = document.createElement('a');
+                                                            a.href = url;
+                                                            a.download = `Cover_Letter_${selectedJob.company.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
+                                                            a.click();
+                                                            URL.revokeObjectURL(url);
+                                                            showToast('PDF downloaded!');
+                                                        } catch (e) { showToast('PDF export failed', 'error'); }
+                                                    }}
+                                                    className="bg-gray-800 hover:bg-gray-700 text-green-400 border border-green-600 px-2 py-1 rounded text-[10px]"
+                                                >
+                                                    PDF
+                                                </button>
+                                            </div>
                                         </div>
                                     )}
                                 </div>

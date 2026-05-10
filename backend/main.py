@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel
 from typing import Optional
 import uvicorn
@@ -11,6 +12,8 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 import asyncio
+from fpdf import FPDF
+import textwrap
 
 import database as db
 from scrapers import scrape_all_platforms
@@ -498,6 +501,99 @@ async def generate_cover_letter(request: GenerateRequest):
 
     except Exception as e:
         print(f"GENERATION ERROR: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+class ExportPDFRequest(BaseModel):
+    text: str
+    job_title: str = ""
+    company: str = ""
+
+
+@app.post("/api/export-pdf")
+async def export_pdf(request: ExportPDFRequest):
+    """Export cover letter text as a professionally formatted PDF."""
+    try:
+        profile = load_profile()
+
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_auto_page_break(auto=True, margin=20)
+
+        # Use built-in fonts (no external font files needed)
+        pdf.set_font("Helvetica", size=10)
+
+        # Header: candidate name
+        pdf.set_font("Helvetica", "B", 14)
+        pdf.cell(0, 8, profile.get("name", ""), new_x="LMARGIN", new_y="NEXT")
+
+        # Contact line
+        pdf.set_font("Helvetica", "", 9)
+        contact_parts = []
+        if profile.get("email"):
+            contact_parts.append(profile["email"])
+        if profile.get("phone"):
+            contact_parts.append(profile["phone"])
+        if profile.get("location"):
+            contact_parts.append(profile["location"])
+        if contact_parts:
+            pdf.set_text_color(80, 80, 80)
+            pdf.cell(0, 5, " | ".join(contact_parts), new_x="LMARGIN", new_y="NEXT")
+
+        # LinkedIn / GitHub
+        links = []
+        if profile.get("linkedin"):
+            links.append(profile["linkedin"])
+        if profile.get("github"):
+            links.append(profile["github"])
+        if links:
+            pdf.cell(0, 5, " | ".join(links), new_x="LMARGIN", new_y="NEXT")
+
+        pdf.set_text_color(0, 0, 0)
+        pdf.ln(4)
+
+        # Separator line
+        pdf.set_draw_color(180, 180, 180)
+        pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+        pdf.ln(6)
+
+        # Job target subtitle
+        if request.job_title or request.company:
+            pdf.set_font("Helvetica", "I", 9)
+            pdf.set_text_color(100, 100, 100)
+            target = f"Re: {request.job_title}" + (f" at {request.company}" if request.company else "")
+            pdf.cell(0, 5, target, new_x="LMARGIN", new_y="NEXT")
+            pdf.set_text_color(0, 0, 0)
+            pdf.ln(4)
+
+        # Body text
+        pdf.set_font("Helvetica", "", 10)
+        
+        # Process text: handle line breaks properly
+        lines = request.text.split("\n")
+        for line in lines:
+            line = line.strip()
+            if not line:
+                pdf.ln(4)
+            else:
+                # Wrap long lines
+                pdf.multi_cell(0, 5, line)
+
+        # Generate PDF bytes
+        pdf_bytes = pdf.output()
+
+        # Create filename
+        safe_company = re.sub(r'[^a-zA-Z0-9]', '_', request.company or "cover_letter")
+        filename = f"Cover_Letter_{safe_company}.pdf"
+
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )
+
+    except Exception as e:
+        print(f"PDF EXPORT ERROR: {e}")
         return {"status": "error", "message": str(e)}
 
 
