@@ -34,231 +34,478 @@
         ::-webkit-scrollbar-thumb:hover { background: #06b6d4; }
         .glass-panel { background: rgba(31, 41, 55, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(55, 65, 81, 0.5); }
         .glow-text { text-shadow: 0 0 8px rgba(6, 182, 212, 0.5); }
+        .tab-active { border-bottom: 2px solid #06b6d4; color: #22d3ee; }
+        .tab-inactive { border-bottom: 2px solid transparent; color: #9ca3af; }
+        .tab-inactive:hover { color: #d1d5db; }
     </style>
 </head>
 <body class="font-mono h-screen flex flex-col overflow-hidden text-sm">
     <div id="root" class="h-full flex flex-col"></div>
 
     <script type="text/babel">
-        const { useState, useEffect } = React;
+        const { useState, useEffect, useCallback } = React;
 
-        // --- Mock Data: Abdellah's Profile ---
-        // --- Updated Profile from Resume ---
-const userProfile = {
-    name: "Abdellah Kahlaoui",
-    title: "Quant Analyst & AI Engineer | Applied Mathematician",
-    location: "Casablanca, Morocco",
-    // We've prioritized your strongest mathematical and engineering keywords
-    skills: [
-        "Stochastic Calculus", 
-        "Deep Reinforcement Learning", 
-        "Monte Carlo Methods", 
-        "Python (PyTorch/NumPy)", 
-        "C# (.NET)", 
-        "SQL & ETL", 
-        "Algorithmic Optimization",
-        "Financial Modeling",
-        "LaTeX"
-    ],
-    experience: "Specializing in DRL for combinatorial optimization and neural volatility calibration engines."
-};
+        const API_BASE = 'http://127.0.0.1:8000';
 
+        const STATUS_COLORS = {
+            new: 'bg-gray-700 text-gray-300',
+            saved: 'bg-blue-900 text-blue-400',
+            applied: 'bg-purple-900 text-purple-400',
+            interview: 'bg-yellow-900 text-yellow-400',
+            offer: 'bg-green-900 text-green-400',
+            rejected: 'bg-red-900 text-red-400',
+            archived: 'bg-gray-800 text-gray-500',
+        };
+
+        const STATUS_OPTIONS = ['saved', 'applied', 'interview', 'offer', 'rejected', 'archived'];
+
+        const userProfile = {
+            name: "Abdellah Kahlaoui",
+            title: "Quant Analyst & AI Engineer | Applied Mathematician",
+            location: "Casablanca, Morocco",
+            skills: [
+                "Stochastic Calculus", 
+                "Deep Reinforcement Learning", 
+                "Monte Carlo Methods", 
+                "Python (PyTorch/NumPy)", 
+                "C# (.NET)", 
+                "SQL & ETL", 
+                "Algorithmic Optimization",
+                "Financial Modeling",
+                "LaTeX"
+            ],
+            experience: "Specializing in DRL for combinatorial optimization and neural volatility calibration engines."
+        };
+
+        // ─── Toast Notification Component ───
+        const Toast = ({ message, type, onClose }) => {
+            useEffect(() => {
+                const timer = setTimeout(onClose, 3000);
+                return () => clearTimeout(timer);
+            }, []);
+            const bg = type === 'success' ? 'bg-green-900 border-green-500' : 'bg-red-900 border-red-500';
+            return (
+                <div className={`fixed top-4 right-4 ${bg} border rounded px-4 py-2 text-xs z-50 animate-pulse`}>
+                    {message}
+                </div>
+            );
+        };
+
+        // ─── Stats Bar Component ───
+        const StatsBar = ({ stats }) => {
+            if (!stats || !stats.by_status) return null;
+            return (
+                <div className="flex gap-2 flex-wrap mb-3">
+                    {Object.entries(stats.by_status).map(([status, count]) => (
+                        <span key={status} className={`text-[10px] px-2 py-1 rounded ${STATUS_COLORS[status] || 'bg-gray-700 text-gray-300'}`}>
+                            {status.toUpperCase()}: {count}
+                        </span>
+                    ))}
+                    <span className="text-[10px] px-2 py-1 rounded bg-teal/20 text-teal">
+                        TOTAL: {stats.total}
+                    </span>
+                </div>
+            );
+        };
+
+        // ─── Tracker Job Card ───
+        const TrackerCard = ({ job, onStatusChange, onDelete }) => {
+            const [showMenu, setShowMenu] = useState(false);
+            return (
+                <div className="mb-2 p-3 bg-charcoal border border-gray-700 rounded hover:border-gray-500 transition-colors">
+                    <div className="flex justify-between items-start mb-1">
+                        <h3 className="text-white font-bold text-xs">{job.title}</h3>
+                        <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${STATUS_COLORS[job.status]}`}>
+                            {job.status.toUpperCase()}
+                        </span>
+                    </div>
+                    <p className="text-teal text-[11px] mb-1">{job.company} // {job.location}</p>
+                    <p className="text-gray-500 text-[10px] mb-2">{job.description?.slice(0, 80)}...</p>
+                    
+                    {job.url && (
+                        <a href={job.url} target="_blank" rel="noopener noreferrer"
+                           className="text-teal-glow text-[10px] hover:text-white mr-3"
+                           onClick={(e) => e.stopPropagation()}>
+                            [LINK]
+                        </a>
+                    )}
+
+                    <div className="flex items-center gap-2 mt-2">
+                        <div className="relative">
+                            <button 
+                                onClick={() => setShowMenu(!showMenu)}
+                                className="text-[10px] bg-gray-800 hover:bg-gray-700 border border-gray-600 px-2 py-1 rounded text-gray-300"
+                            >
+                                STATUS ▾
+                            </button>
+                            {showMenu && (
+                                <div className="absolute bottom-full left-0 mb-1 bg-gray-800 border border-gray-600 rounded shadow-lg z-10">
+                                    {STATUS_OPTIONS.map(s => (
+                                        <button key={s} 
+                                            onClick={() => { onStatusChange(job.id, s); setShowMenu(false); }}
+                                            className="block w-full text-left text-[10px] px-3 py-1.5 hover:bg-gray-700 text-gray-300 whitespace-nowrap"
+                                        >
+                                            {s.toUpperCase()}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                        <button 
+                            onClick={() => onDelete(job.id)}
+                            className="text-[10px] text-red-400 hover:text-red-300 px-2 py-1"
+                        >
+                            [DELETE]
+                        </button>
+                        <span className="text-[10px] text-gray-600 ml-auto">
+                            {job.match_score}% match
+                        </span>
+                    </div>
+                </div>
+            );
+        };
+
+        // ─── Main App ───
         const App = () => {
+            const [activeTab, setActiveTab] = useState('search'); // 'search' | 'tracker'
             const [searchQuery, setSearchQuery] = useState("location:Morocco");
             const [isSearching, setIsSearching] = useState(false);
             const [jobs, setJobs] = useState([]);
             const [selectedJob, setSelectedJob] = useState(null);
             const [isGenerating, setIsGenerating] = useState(false);
             const [generatedAssets, setGeneratedAssets] = useState({});
+            
+            // Tracker state
+            const [trackedJobs, setTrackedJobs] = useState([]);
+            const [trackerFilter, setTrackerFilter] = useState(null);
+            const [stats, setStats] = useState(null);
+            const [toast, setToast] = useState(null);
 
-            // Simulate Gemini Web Search API Call
-            // --- Real Backend Connections ---
+            const showToast = (message, type = 'success') => setToast({ message, type });
 
-const handleSearch = async () => {
-    setIsSearching(true);
-    setJobs([]);
-    setSelectedJob(null);
-    
-    try {
-        const response = await fetch('http://127.0.0.1:8000/api/search', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: searchQuery, location: "Morocco" })
-        });
-        
-        const data = await response.json();
-        
-        if (data.status === "success") {
-            setJobs(data.results);
-        } else {
-            console.error("Search failed:", data.message);
-            alert("Error during AI Search. Check console.");
-        }
-    } catch (error) {
-        console.error("Network error:", error);
-    } finally {
-        setIsSearching(false);
-    }
-};
+            // ─── Tracker API calls ───
+            const fetchTrackedJobs = useCallback(async () => {
+                try {
+                    const url = trackerFilter 
+                        ? `${API_BASE}/api/jobs?status=${trackerFilter}` 
+                        : `${API_BASE}/api/jobs`;
+                    const res = await fetch(url);
+                    const data = await res.json();
+                    if (data.status === 'success') setTrackedJobs(data.results);
+                } catch (e) { console.error(e); }
+            }, [trackerFilter]);
 
-const handleGenerate = async (job) => {
-    setSelectedJob(job);
-    setIsGenerating(true);
-    
-    try {
-        const response = await fetch('http://127.0.0.1:8000/api/generate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-                job: job, 
-                profile: userProfile 
-            })
-        });
-        
-        const data = await response.json();
-        
-        if (data.status === "success") {
-            setGeneratedAssets(prev => ({
-                ...prev,
-                [job.id]: data.asset
-            }));
-        }
-    } catch (error) {
-        console.error("Network error:", error);
-    } finally {
-        setIsGenerating(false);
-    }
-};
+            const fetchStats = async () => {
+                try {
+                    const res = await fetch(`${API_BASE}/api/jobs/stats`);
+                    const data = await res.json();
+                    if (data.status === 'success') setStats(data.stats);
+                } catch (e) { console.error(e); }
+            };
+
+            useEffect(() => {
+                if (activeTab === 'tracker') {
+                    fetchTrackedJobs();
+                    fetchStats();
+                }
+            }, [activeTab, fetchTrackedJobs]);
+
+            const saveJob = async (job) => {
+                try {
+                    const res = await fetch(`${API_BASE}/api/jobs/save`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            title: job.title,
+                            company: job.company,
+                            location: job.location || '',
+                            desc: job.desc || '',
+                            url: job.url || '',
+                            url_is_fallback: job.url_is_fallback || false,
+                            match: job.match || 0,
+                        })
+                    });
+                    const data = await res.json();
+                    if (data.status === 'success') {
+                        showToast(`Saved: ${job.title} @ ${job.company}`);
+                        // Update search results to reflect saved state
+                        setJobs(prev => prev.map(j => 
+                            j.title === job.title && j.company === job.company
+                                ? { ...j, already_saved: true, saved_status: 'saved', saved_id: data.job.id }
+                                : j
+                        ));
+                    }
+                } catch (e) { showToast('Failed to save job', 'error'); }
+            };
+
+            const updateStatus = async (jobId, status) => {
+                try {
+                    const res = await fetch(`${API_BASE}/api/jobs/${jobId}/status`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ status })
+                    });
+                    const data = await res.json();
+                    if (data.status === 'success') {
+                        showToast(`Status → ${status.toUpperCase()}`);
+                        fetchTrackedJobs();
+                        fetchStats();
+                    }
+                } catch (e) { showToast('Failed to update', 'error'); }
+            };
+
+            const deleteJob = async (jobId) => {
+                try {
+                    const res = await fetch(`${API_BASE}/api/jobs/${jobId}`, { method: 'DELETE' });
+                    const data = await res.json();
+                    if (data.status === 'success') {
+                        showToast('Job removed');
+                        fetchTrackedJobs();
+                        fetchStats();
+                    }
+                } catch (e) { showToast('Failed to delete', 'error'); }
+            };
+
+            // ─── Search & Generate ───
+            const handleSearch = async () => {
+                setIsSearching(true);
+                setJobs([]);
+                setSelectedJob(null);
+                try {
+                    const response = await fetch(`${API_BASE}/api/search`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ query: searchQuery, location: "Morocco" })
+                    });
+                    const data = await response.json();
+                    if (data.status === "success") {
+                        setJobs(data.results);
+                    } else {
+                        showToast("Search failed: " + data.message, 'error');
+                    }
+                } catch (error) {
+                    showToast("Network error", 'error');
+                } finally {
+                    setIsSearching(false);
+                }
+            };
+
+            const handleGenerate = async (job) => {
+                setSelectedJob(job);
+                setIsGenerating(true);
+                try {
+                    const response = await fetch(`${API_BASE}/api/generate`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ job: job, profile: userProfile })
+                    });
+                    const data = await response.json();
+                    if (data.status === "success") {
+                        setGeneratedAssets(prev => ({ ...prev, [job.id]: data.asset }));
+                    }
+                } catch (error) {
+                    showToast("Generation failed", 'error');
+                } finally {
+                    setIsGenerating(false);
+                }
+            };
 
             const copyToClipboard = (text) => {
                 navigator.clipboard.writeText(text);
-                alert("Copied to clipboard!"); // In a real app, use a sleek toast notification
+                showToast("Copied to clipboard!");
             };
 
             return (
-                <div className="flex h-full w-full bg-navy p-4 gap-4">
+                <div className="flex flex-col h-full w-full bg-navy">
+                    {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
                     
-                    {/* Left Sidebar: Profile & Config */}
-                    <div className="w-1/4 glass-panel rounded-lg p-5 flex flex-col">
-                        <div className="mb-6">
-                            <h1 className="text-teal text-xl font-bold glow-text mb-1">SYS.JOB_AGENT_v1.0</h1>
-                            <p className="text-gray-400 text-xs">Status: <span className="text-green-400">ONLINE</span></p>
-                        </div>
-                        
-                        <div className="mb-6 border-t border-gray-700 pt-4">
-                            <h2 className="text-gray-300 uppercase text-xs font-bold mb-3 tracking-wider">Loaded Profile</h2>
-                            <div className="bg-charcoal p-3 rounded border border-gray-700">
-                                <p className="text-white font-bold">{userProfile.name}</p>
-                                <p className="text-teal text-xs mb-2">{userProfile.title}</p>
-                                <div className="flex flex-wrap gap-1 mt-2">
-                                    {userProfile.skills.map(skill => (
-                                        <span key={skill} className="bg-gray-800 text-gray-300 text-[10px] px-2 py-1 rounded border border-gray-600">
-                                            {skill}
-                                        </span>
+                    {/* Tab Navigation */}
+                    <div className="flex items-center px-4 pt-3 pb-0 gap-6 border-b border-gray-800">
+                        <h1 className="text-teal text-lg font-bold glow-text mr-6">SYS.JOB_AGENT</h1>
+                        <button 
+                            onClick={() => setActiveTab('search')}
+                            className={`pb-2 text-xs font-bold uppercase tracking-wider ${activeTab === 'search' ? 'tab-active' : 'tab-inactive'}`}
+                        >
+                            Search & Generate
+                        </button>
+                        <button 
+                            onClick={() => setActiveTab('tracker')}
+                            className={`pb-2 text-xs font-bold uppercase tracking-wider ${activeTab === 'tracker' ? 'tab-active' : 'tab-inactive'}`}
+                        >
+                            Tracker ({trackedJobs.length})
+                        </button>
+                        <span className="ml-auto text-[10px] text-gray-500">
+                            Status: <span className="text-green-400">ONLINE</span>
+                        </span>
+                    </div>
+
+                    {/* ═══ SEARCH TAB ═══ */}
+                    {activeTab === 'search' && (
+                        <div className="flex flex-1 p-4 gap-4 overflow-hidden">
+                            
+                            {/* Left: Profile */}
+                            <div className="w-1/5 glass-panel rounded-lg p-4 flex flex-col">
+                                <h2 className="text-gray-300 uppercase text-[10px] font-bold mb-3 tracking-wider">Profile</h2>
+                                <div className="bg-charcoal p-3 rounded border border-gray-700">
+                                    <p className="text-white font-bold text-xs">{userProfile.name}</p>
+                                    <p className="text-teal text-[10px] mb-2">{userProfile.title}</p>
+                                    <div className="flex flex-wrap gap-1 mt-2">
+                                        {userProfile.skills.map(skill => (
+                                            <span key={skill} className="bg-gray-800 text-gray-300 text-[9px] px-1.5 py-0.5 rounded border border-gray-600">
+                                                {skill}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Middle: Search & Results */}
+                            <div className="w-1/3 glass-panel rounded-lg p-4 flex flex-col">
+                                <div className="mb-3">
+                                    <textarea 
+                                        className="w-full bg-charcoal border border-gray-700 rounded p-2 text-gray-200 focus:border-teal focus:outline-none resize-none text-xs"
+                                        rows="2"
+                                        value={searchQuery}
+                                        onChange={(e) => setSearchQuery(e.target.value)}
+                                        onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSearch(); }}}
+                                        placeholder="Enter search query..."
+                                    />
+                                    <button 
+                                        onClick={handleSearch}
+                                        disabled={isSearching}
+                                        className="w-full mt-2 bg-teal hover:bg-teal-glow text-navy font-bold py-2 rounded transition-colors text-xs"
+                                    >
+                                        {isSearching ? "> SEARCHING..." : "> EXECUTE SEARCH"}
+                                    </button>
+                                </div>
+
+                                <div className="flex-1 overflow-y-auto pr-1">
+                                    {jobs.length > 0 && (
+                                        <p className="text-gray-500 text-[10px] mb-2">Found {jobs.length} targets</p>
+                                    )}
+                                    
+                                    {jobs.length === 0 && !isSearching && (
+                                        <p className="text-gray-500 italic text-center mt-10 text-xs">Awaiting execution...</p>
+                                    )}
+
+                                    {jobs.map(job => (
+                                        <div 
+                                            key={job.id} 
+                                            className={`mb-2 p-3 rounded border cursor-pointer transition-colors ${selectedJob?.id === job.id ? 'bg-gray-800 border-teal' : 'bg-charcoal border-gray-700 hover:border-gray-500'}`}
+                                            onClick={() => handleGenerate(job)}
+                                        >
+                                            <div className="flex justify-between items-start mb-1">
+                                                <h3 className="text-white font-bold text-xs">{job.title}</h3>
+                                                <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${job.match >= 90 ? 'bg-green-900 text-green-400' : 'bg-yellow-900 text-yellow-400'}`}>
+                                                    {job.match}%
+                                                </span>
+                                            </div>
+                                            <p className="text-teal text-[11px] mb-1">{job.company} // {job.location}</p>
+                                            <p className="text-gray-400 text-[10px] line-clamp-2 mb-2">{job.desc}</p>
+                                            
+                                            <div className="flex items-center justify-between">
+                                                {job.url && (
+                                                    <a href={job.url} target="_blank" rel="noopener noreferrer"
+                                                       className={`text-[9px] uppercase tracking-widest ${job.url_is_fallback ? 'text-yellow-400' : 'text-teal-glow'} hover:text-white`}
+                                                       onClick={(e) => e.stopPropagation()}
+                                                       title={job.url_is_fallback ? "Google Search fallback" : "Direct link"}>
+                                                        {job.url_is_fallback ? '[SEARCH]' : '[LINK]'}
+                                                    </a>
+                                                )}
+                                                
+                                                {job.already_saved ? (
+                                                    <span className={`text-[9px] px-1.5 py-0.5 rounded ${STATUS_COLORS[job.saved_status]}`}>
+                                                        ✓ {job.saved_status.toUpperCase()}
+                                                    </span>
+                                                ) : (
+                                                    <button 
+                                                        onClick={(e) => { e.stopPropagation(); saveJob(job); }}
+                                                        className="text-[9px] bg-teal/20 hover:bg-teal/40 text-teal px-2 py-0.5 rounded transition-colors"
+                                                    >
+                                                        + SAVE
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
                                     ))}
                                 </div>
                             </div>
-                        </div>
 
-                        <div className="mt-auto">
-                            <p className="text-xs text-gray-500">Gemini Web Search API: <span className="text-teal">CONNECTED</span></p>
-                        </div>
-                    </div>
-
-                    {/* Middle Panel: Search & Results */}
-                    <div className="w-1/3 glass-panel rounded-lg p-5 flex flex-col">
-                        <div className="mb-4">
-                            <label className="text-teal uppercase text-xs font-bold mb-2 block">Search Parameters</label>
-                            <textarea 
-                                className="w-full bg-charcoal border border-gray-700 rounded p-2 text-gray-200 focus:border-teal focus:outline-none resize-none"
-                                rows="2"
-                                value={searchQuery}
-                                onChange={(e) => setSearchQuery(e.target.value)}
-                            />
-                            <button 
-                                onClick={handleSearch}
-                                disabled={isSearching}
-                                className="w-full mt-2 bg-teal hover:bg-teal-glow text-navy font-bold py-2 rounded transition-colors"
-                            >
-                                {isSearching ? "> INITIATING SEARCH..." : "> EXECUTE SEARCH"}
-                            </button>
-                        </div>
-
-                        <div className="flex-1 overflow-y-auto pr-2">
-                            <h2 className="text-gray-300 uppercase text-xs font-bold mb-3 tracking-wider">Identified Targets</h2>
-                            
-                            {jobs.length === 0 && !isSearching && (
-                                <p className="text-gray-500 italic text-center mt-10">Awaiting execution...</p>
-                            )}
-
-                            {jobs.map(job => (
-                                <div 
-                                    key={job.id} 
-                                    className={`mb-3 p-4 rounded border cursor-pointer transition-colors ${selectedJob?.id === job.id ? 'bg-gray-800 border-teal' : 'bg-charcoal border-gray-700 hover:border-gray-500'}`}
-                                    onClick={() => handleGenerate(job)}
-                                >
-                                    <div className="flex justify-between items-start mb-1">
-                                        <h3 className="text-white font-bold">{job.title}</h3>
-                                        <span className={`text-xs px-2 py-1 rounded font-bold ${job.match >= 90 ? 'bg-green-900 text-green-400' : 'bg-yellow-900 text-yellow-400'}`}>
-                                            {job.match}% MATCH
-                                        </span>
-                                    </div>
-                                    <p className="text-teal text-xs mb-2">{job.company} // {job.location}</p>
-                                    <p className="text-gray-400 text-xs line-clamp-2 mb-2">{job.desc}</p>
-                                    
-                                    {/* NEW: Clickable URL Link with fallback handling */}
-                                    {job.url && (
-                                        <a 
-                                            href={job.url} 
-                                            target="_blank" 
-                                            rel="noopener noreferrer" 
-                                            className={`text-[10px] uppercase tracking-widest border-b border-transparent hover:border-white transition-colors ${job.url_is_fallback ? 'text-yellow-400 hover:text-white' : 'text-teal-glow hover:text-white'}`}
-                                            onClick={(e) => e.stopPropagation()} 
-                                            title={job.url_is_fallback ? "Opens a Google Search for this job (direct link unavailable)" : "Opens the direct job listing page"}
-                                        >
-                                            {job.url_is_fallback 
-                                                ? '[ Search on Google // Direct Link Unavailable ]' 
-                                                : '[ Initialize Deployment // View Source ]'}
-                                        </a>
+                            {/* Right: Generated Cover Letter */}
+                            <div className="flex-1 glass-panel rounded-lg p-4 flex flex-col">
+                                <h2 className="text-teal uppercase text-[10px] font-bold mb-2 tracking-wider flex justify-between">
+                                    <span>Generated Assets</span>
+                                    {selectedJob && <span className="text-gray-400">TARGET: {selectedJob.company}</span>}
+                                </h2>
+                                
+                                <div className="flex-1 bg-charcoal border border-gray-700 rounded p-4 overflow-y-auto relative">
+                                    {!selectedJob ? (
+                                        <div className="h-full flex items-center justify-center text-gray-600 text-xs">
+                                            Select a target to generate tailored application materials.
+                                        </div>
+                                    ) : isGenerating ? (
+                                        <div className="h-full flex flex-col items-center justify-center text-teal">
+                                            <div className="animate-pulse mb-2">████████████████</div>
+                                            <p className="text-xs">> Running Gemini LLM...</p>
+                                        </div>
+                                    ) : (
+                                        <div className="text-gray-300 whitespace-pre-wrap leading-relaxed text-xs">
+                                            {generatedAssets[selectedJob.id]}
+                                            <button 
+                                                onClick={() => copyToClipboard(generatedAssets[selectedJob.id])}
+                                                className="absolute top-3 right-3 bg-gray-800 hover:bg-gray-700 text-teal border border-teal px-2 py-1 rounded text-[10px]"
+                                            >
+                                                COPY
+                                            </button>
+                                        </div>
                                     )}
                                 </div>
-                            ))}
+                            </div>
                         </div>
-                    </div>
+                    )}
 
-                    {/* Right Panel: Cover Letter / Action Generation */}
-                    <div className="flex-1 glass-panel rounded-lg p-5 flex flex-col">
-                        <h2 className="text-teal uppercase text-xs font-bold mb-3 tracking-wider flex justify-between">
-                            <span>Generated Assets</span>
-                            {selectedJob && <span>TARGET: {selectedJob.company}</span>}
-                        </h2>
-                        
-                        <div className="flex-1 bg-charcoal border border-gray-700 rounded p-4 overflow-y-auto relative">
-                            {!selectedJob ? (
-                                <div className="h-full flex items-center justify-center text-gray-600">
-                                    Select a target to generate tailored application materials.
-                                </div>
-                            ) : isGenerating ? (
-                                <div className="h-full flex flex-col items-center justify-center text-teal">
-                                    <div className="animate-pulse mb-2">██████████████████</div>
-                                    <p>> Synthesizing CV with job requirements...</p>
-                                    <p>> Running Gemini LLM optimization...</p>
-                                </div>
-                            ) : (
-                                <div className="text-gray-300 whitespace-pre-wrap leading-relaxed">
-                                    {generatedAssets[selectedJob.id]}
-                                    
-                                    <button 
-                                        onClick={() => copyToClipboard(generatedAssets[selectedJob.id])}
-                                        className="absolute top-4 right-4 bg-gray-800 hover:bg-gray-700 text-teal border border-teal px-3 py-1 rounded text-xs transition-colors"
+                    {/* ═══ TRACKER TAB ═══ */}
+                    {activeTab === 'tracker' && (
+                        <div className="flex-1 p-4 overflow-hidden flex flex-col">
+                            <StatsBar stats={stats} />
+                            
+                            {/* Filter buttons */}
+                            <div className="flex gap-2 mb-3 flex-wrap">
+                                <button 
+                                    onClick={() => setTrackerFilter(null)}
+                                    className={`text-[10px] px-3 py-1 rounded border transition-colors ${!trackerFilter ? 'border-teal text-teal bg-teal/10' : 'border-gray-600 text-gray-400 hover:border-gray-400'}`}
+                                >
+                                    ALL
+                                </button>
+                                {STATUS_OPTIONS.map(s => (
+                                    <button key={s}
+                                        onClick={() => setTrackerFilter(s)}
+                                        className={`text-[10px] px-3 py-1 rounded border transition-colors ${trackerFilter === s ? 'border-teal text-teal bg-teal/10' : 'border-gray-600 text-gray-400 hover:border-gray-400'}`}
                                     >
-                                        [ COPY TO CLIPBOARD ]
+                                        {s.toUpperCase()}
                                     </button>
-                                </div>
-                            )}
-                        </div>
-                    </div>
+                                ))}
+                            </div>
 
+                            {/* Job list */}
+                            <div className="flex-1 overflow-y-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 content-start">
+                                {trackedJobs.length === 0 ? (
+                                    <div className="col-span-full text-center text-gray-500 mt-10 text-xs">
+                                        No tracked jobs{trackerFilter ? ` with status "${trackerFilter}"` : ''}. Save jobs from search results.
+                                    </div>
+                                ) : (
+                                    trackedJobs.map(job => (
+                                        <TrackerCard 
+                                            key={job.id} 
+                                            job={job} 
+                                            onStatusChange={updateStatus}
+                                            onDelete={deleteJob}
+                                        />
+                                    ))
+                                )}
+                            </div>
+                        </div>
+                    )}
                 </div>
             );
         };

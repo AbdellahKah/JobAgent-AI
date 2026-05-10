@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import Optional
 import uvicorn
 import json
 import re
@@ -10,6 +11,8 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 import asyncio
+
+import database as db
 
 load_dotenv()
 
@@ -52,6 +55,19 @@ class ProfileData(BaseModel):
 class GenerateRequest(BaseModel):
     job: JobTarget
     profile: ProfileData
+
+class SaveJobRequest(BaseModel):
+    title: str
+    company: str
+    location: str = ""
+    desc: str = ""
+    url: str = ""
+    url_is_fallback: bool = False
+    match: int = 0
+
+class UpdateStatusRequest(BaseModel):
+    status: str
+    notes: Optional[str] = None
 
 
 # ─────────────────────────────────────────────
@@ -217,6 +233,16 @@ async def search_jobs(request: SearchRequest):
 
         jobs_data.sort(key=lambda x: x.get("match", 0), reverse=True)
 
+        # Flag jobs already saved in the database (deduplication)
+        for job in jobs_data:
+            existing = db.find_duplicates(job.get("title", ""), job.get("company", ""))
+            if existing:
+                job["already_saved"] = True
+                job["saved_status"] = existing["status"]
+                job["saved_id"] = existing["id"]
+            else:
+                job["already_saved"] = False
+
         return {"status": "success", "results": jobs_data}
 
     except json.JSONDecodeError as e:
@@ -289,6 +315,75 @@ async def generate_cover_letter(request: GenerateRequest):
 
     except Exception as e:
         print(f"GENERATION ERROR: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+# ─────────────────────────────────────────────
+# Job Tracker Endpoints
+# ─────────────────────────────────────────────
+
+@app.get("/api/jobs")
+async def list_saved_jobs(status: Optional[str] = None):
+    """List all saved jobs, optionally filtered by status."""
+    try:
+        jobs = db.get_all_jobs(status=status)
+        return {"status": "success", "results": jobs}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/jobs/stats")
+async def job_stats():
+    """Get summary statistics for tracked jobs."""
+    try:
+        stats = db.get_stats()
+        return {"status": "success", "stats": stats}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/jobs/save")
+async def save_job(request: SaveJobRequest):
+    """Save a job from search results to the tracker."""
+    try:
+        job_data = {
+            "title": request.title,
+            "company": request.company,
+            "location": request.location,
+            "desc": request.desc,
+            "url": request.url,
+            "url_is_fallback": request.url_is_fallback,
+            "match": request.match,
+        }
+        saved = db.save_job(job_data)
+        return {"status": "success", "job": saved}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.patch("/api/jobs/{job_id}/status")
+async def update_job_status(job_id: int, request: UpdateStatusRequest):
+    """Update the application status of a tracked job."""
+    try:
+        updated = db.update_job_status(job_id, request.status, request.notes)
+        if updated:
+            return {"status": "success", "job": updated}
+        return {"status": "error", "message": "Job not found"}
+    except ValueError as e:
+        return {"status": "error", "message": str(e)}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.delete("/api/jobs/{job_id}")
+async def delete_job(job_id: int):
+    """Remove a job from the tracker."""
+    try:
+        deleted = db.delete_job(job_id)
+        if deleted:
+            return {"status": "success", "message": "Job removed"}
+        return {"status": "error", "message": "Job not found"}
+    except Exception as e:
         return {"status": "error", "message": str(e)}
 
 
