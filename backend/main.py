@@ -14,8 +14,11 @@ import asyncio
 
 import database as db
 from scrapers import scrape_all_platforms
+import os
 
 load_dotenv()
+
+PROFILE_PATH = os.path.join(os.path.dirname(__file__), "profile.json")
 
 # ─────────────────────────────────────────────
 # Client — instantiated once at startup
@@ -69,6 +72,57 @@ class SaveJobRequest(BaseModel):
 class UpdateStatusRequest(BaseModel):
     status: str
     notes: Optional[str] = None
+
+
+# ─────────────────────────────────────────────
+# Utility: Profile Loader
+# ─────────────────────────────────────────────
+
+def load_profile() -> dict:
+    """Load profile from profile.json."""
+    try:
+        with open(PROFILE_PATH, "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+def save_profile(data: dict):
+    """Save profile to profile.json."""
+    with open(PROFILE_PATH, "w") as f:
+        json.dump(data, f, indent=4, ensure_ascii=False)
+
+def build_profile_prompt_block(profile: dict) -> str:
+    """Build the profile section for the cover letter prompt from profile data."""
+    exp_lines = ""
+    for exp in profile.get("experience", []):
+        exp_lines += f"\n          — {exp.get('duration', '')} internship at {exp.get('company', '')} as {exp.get('role', '')}"
+        for h in exp.get("highlights", []):
+            exp_lines += f"\n          — {h}"
+
+    proj_lines = ""
+    for i, proj in enumerate(profile.get("projects", []), 1):
+        proj_lines += f"\n          {i}. {proj.get('name', '')}: {proj.get('description', '')}"
+
+    return f"""
+        NAME: {profile.get('name', '')}
+        CONTACT:
+          - Location: {profile.get('location', '')}
+          - Email: {profile.get('email', '')}
+          - Phone: {profile.get('phone', '')}
+          - LinkedIn: {profile.get('linkedin', '')}
+          - GitHub: {profile.get('github', '')}
+
+        EDUCATION: {profile.get('education', {}).get('degree', '')} , {profile.get('education', {}).get('school', '')}
+          — Core disciplines: {', '.join(profile.get('education', {}).get('disciplines', []))}
+
+        TECH STACK: {profile.get('tech_stack', '')}
+
+        ENTERPRISE EXPERIENCE:{exp_lines}
+
+        SIGNATURE PROJECTS (always cite at least one when relevant):{proj_lines}
+
+        LANGUAGES: {', '.join(profile.get('languages', []))}
+    """
 
 
 # ─────────────────────────────────────────────
@@ -324,6 +378,8 @@ async def generate_cover_letter(request: GenerateRequest):
 
     try:
         current_date = datetime.now().strftime("%B %d, %Y")
+        profile = load_profile()
+        profile_block = build_profile_prompt_block(profile)
 
         prompt = f"""
         Write a highly professional, concise, and compelling cover letter for the position of {request.job.title} at {request.job.company}.
@@ -331,38 +387,13 @@ async def generate_cover_letter(request: GenerateRequest):
         Job Description: {request.job.desc}
 
         Candidate Profile — use every relevant detail below to aggressively tailor the letter:
-
-        NAME: Abdellah Kahlaoui
-        CONTACT:
-          - Location: Casablanca, Morocco
-          - Email: kahlaouiabdellah6@gmail.com
-          - Phone: +212724458783
-          - LinkedIn: linkedin.com/in/kahabdu1808
-          - GitHub: github.com/AbdellahKah/AbdellahKah
-
-        EDUCATION: M2 Applied Mathematics, FST Settat
-          — Core disciplines: Stochastic Calculus, Statistical Learning, Numerical Optimization, Time Series Analysis
-
-        TECH STACK: Python (NumPy, PyTorch, Pandas, Scikit-learn), C#/.NET, SQL, MATLAB, Git, Power BI
-
-        ENTERPRISE EXPERIENCE:
-          — 6-month internship at Safran as Data Analyst & Full-Stack Developer
-          — Delivered scalable C# desktop applications and REST APIs
-          — Engineered SQL-to-Power BI ETL pipelines with measurable latency reduction
-
-        SIGNATURE PROJECTS (always cite at least one when relevant):
-          1. Neural Volatility Calibration Engine: Neural network surrogate for Heston & SABR stochastic
-             volatility models. Achieved 1000x inference speedup over classical Monte Carlo methods.
-          2. DRL Agent for TSP: Deep Reinforcement Learning agent in PyTorch solving the Travelling
-             Salesman Problem (combinatorial optimization).
-
-        LANGUAGES: French (native), English (C1)
+        {profile_block}
 
         === LETTER DIRECTIVES ===
         - HEADER: Open with a formal header: candidate name + full contact block, then today's date ({current_date}), then employer details if available, then greeting.
         - TONE: Sleek, confident, technically precise, direct. Never desperate or sycophantic.
         - STRATEGY: Identify the 2-3 core technical needs in the job description. Map them explicitly to the candidate's profile. Emphasize the rare bridge between rigorous mathematical theory (stochastic analysis, RL) and production engineering (C#, Python).
-        - DIFFERENTIATION: The Neural Volatility Calibration Engine and DRL-for-TSP are primary differentiators — use them strategically, not decoratively.
+        - DIFFERENTIATION: The signature projects are primary differentiators — use them strategically, not decoratively.
         - AVOID: Fluffy openers ("I am excited to apply..."), generic jargon, repetitive phrasing.
         - OUTPUT FORMAT: Return ONLY the final letter text. No markdown, no code fences, no commentary.
         """
@@ -448,6 +479,30 @@ async def delete_job(job_id: int):
         if deleted:
             return {"status": "success", "message": "Job removed"}
         return {"status": "error", "message": "Job not found"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+# ─────────────────────────────────────────────
+# Profile Endpoints
+# ─────────────────────────────────────────────
+
+@app.get("/api/profile")
+async def get_profile():
+    """Get the current user profile."""
+    try:
+        profile = load_profile()
+        return {"status": "success", "profile": profile}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.put("/api/profile")
+async def update_profile(profile: dict):
+    """Update the user profile."""
+    try:
+        save_profile(profile)
+        return {"status": "success", "profile": profile}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 

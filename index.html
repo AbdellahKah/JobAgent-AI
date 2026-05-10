@@ -181,6 +181,11 @@
             const [stats, setStats] = useState(null);
             const [toast, setToast] = useState(null);
 
+            // Profile state
+            const [profile, setProfile] = useState(null);
+            const [profileDraft, setProfileDraft] = useState(null);
+            const [isSavingProfile, setIsSavingProfile] = useState(false);
+
             const showToast = (message, type = 'success') => setToast({ message, type });
 
             // ─── Tracker API calls ───
@@ -208,7 +213,41 @@
                     fetchTrackedJobs();
                     fetchStats();
                 }
+                if (activeTab === 'profile' && !profile) {
+                    fetchProfile();
+                }
             }, [activeTab, fetchTrackedJobs]);
+
+            const fetchProfile = async () => {
+                try {
+                    const res = await fetch(`${API_BASE}/api/profile`);
+                    const data = await res.json();
+                    if (data.status === 'success') {
+                        setProfile(data.profile);
+                        setProfileDraft(data.profile);
+                    }
+                } catch (e) { console.error(e); }
+            };
+
+            // Load profile on app mount
+            useEffect(() => { fetchProfile(); }, []);
+
+            const saveProfileToServer = async () => {
+                setIsSavingProfile(true);
+                try {
+                    const res = await fetch(`${API_BASE}/api/profile`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(profileDraft)
+                    });
+                    const data = await res.json();
+                    if (data.status === 'success') {
+                        setProfile(data.profile);
+                        showToast('Profile saved!');
+                    }
+                } catch (e) { showToast('Failed to save profile', 'error'); }
+                finally { setIsSavingProfile(false); }
+            };
 
             const saveJob = async (job) => {
                 try {
@@ -334,6 +373,12 @@
                         >
                             Tracker ({trackedJobs.length})
                         </button>
+                        <button 
+                            onClick={() => setActiveTab('profile')}
+                            className={`pb-2 text-xs font-bold uppercase tracking-wider ${activeTab === 'profile' ? 'tab-active' : 'tab-inactive'}`}
+                        >
+                            Profile
+                        </button>
                         <span className="ml-auto text-[10px] text-gray-500">
                             Status: <span className="text-green-400">ONLINE</span>
                         </span>
@@ -347,10 +392,10 @@
                             <div className="w-1/5 glass-panel rounded-lg p-4 flex flex-col">
                                 <h2 className="text-gray-300 uppercase text-[10px] font-bold mb-3 tracking-wider">Profile</h2>
                                 <div className="bg-charcoal p-3 rounded border border-gray-700">
-                                    <p className="text-white font-bold text-xs">{userProfile.name}</p>
-                                    <p className="text-teal text-[10px] mb-2">{userProfile.title}</p>
+                                    <p className="text-white font-bold text-xs">{profile?.name || userProfile.name}</p>
+                                    <p className="text-teal text-[10px] mb-2">{profile?.title || userProfile.title}</p>
                                     <div className="flex flex-wrap gap-1 mt-2">
-                                        {userProfile.skills.map(skill => (
+                                        {(profile?.skills || userProfile.skills).map(skill => (
                                             <span key={skill} className="bg-gray-800 text-gray-300 text-[9px] px-1.5 py-0.5 rounded border border-gray-600">
                                                 {skill}
                                             </span>
@@ -503,6 +548,151 @@
                                         />
                                     ))
                                 )}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* ═══ PROFILE TAB ═══ */}
+                    {activeTab === 'profile' && profileDraft && (
+                        <div className="flex-1 p-4 overflow-y-auto">
+                            <div className="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-4">
+                                
+                                {/* Basic Info */}
+                                <div className="glass-panel rounded-lg p-4">
+                                    <h3 className="text-teal text-xs font-bold uppercase mb-3 tracking-wider">Basic Info</h3>
+                                    <div className="space-y-2">
+                                        <div>
+                                            <label className="text-gray-400 text-[10px] uppercase">Full Name</label>
+                                            <input className="w-full bg-charcoal border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 focus:border-teal focus:outline-none"
+                                                value={profileDraft.name || ''}
+                                                onChange={e => setProfileDraft({...profileDraft, name: e.target.value})} />
+                                        </div>
+                                        <div>
+                                            <label className="text-gray-400 text-[10px] uppercase">Title</label>
+                                            <input className="w-full bg-charcoal border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 focus:border-teal focus:outline-none"
+                                                value={profileDraft.title || ''}
+                                                onChange={e => setProfileDraft({...profileDraft, title: e.target.value})} />
+                                        </div>
+                                        <div>
+                                            <label className="text-gray-400 text-[10px] uppercase">Location</label>
+                                            <input className="w-full bg-charcoal border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 focus:border-teal focus:outline-none"
+                                                value={profileDraft.location || ''}
+                                                onChange={e => setProfileDraft({...profileDraft, location: e.target.value})} />
+                                        </div>
+                                        <div>
+                                            <label className="text-gray-400 text-[10px] uppercase">Email</label>
+                                            <input className="w-full bg-charcoal border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 focus:border-teal focus:outline-none"
+                                                value={profileDraft.email || ''}
+                                                onChange={e => setProfileDraft({...profileDraft, email: e.target.value})} />
+                                        </div>
+                                        <div>
+                                            <label className="text-gray-400 text-[10px] uppercase">Phone</label>
+                                            <input className="w-full bg-charcoal border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 focus:border-teal focus:outline-none"
+                                                value={profileDraft.phone || ''}
+                                                onChange={e => setProfileDraft({...profileDraft, phone: e.target.value})} />
+                                        </div>
+                                        <div>
+                                            <label className="text-gray-400 text-[10px] uppercase">LinkedIn</label>
+                                            <input className="w-full bg-charcoal border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 focus:border-teal focus:outline-none"
+                                                value={profileDraft.linkedin || ''}
+                                                onChange={e => setProfileDraft({...profileDraft, linkedin: e.target.value})} />
+                                        </div>
+                                        <div>
+                                            <label className="text-gray-400 text-[10px] uppercase">GitHub</label>
+                                            <input className="w-full bg-charcoal border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 focus:border-teal focus:outline-none"
+                                                value={profileDraft.github || ''}
+                                                onChange={e => setProfileDraft({...profileDraft, github: e.target.value})} />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Skills & Tech */}
+                                <div className="glass-panel rounded-lg p-4">
+                                    <h3 className="text-teal text-xs font-bold uppercase mb-3 tracking-wider">Skills & Tech Stack</h3>
+                                    <div className="space-y-2">
+                                        <div>
+                                            <label className="text-gray-400 text-[10px] uppercase">Skills (comma-separated)</label>
+                                            <textarea className="w-full bg-charcoal border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 focus:border-teal focus:outline-none resize-none"
+                                                rows="3"
+                                                value={(profileDraft.skills || []).join(', ')}
+                                                onChange={e => setProfileDraft({...profileDraft, skills: e.target.value.split(',').map(s => s.trim()).filter(Boolean)})} />
+                                        </div>
+                                        <div>
+                                            <label className="text-gray-400 text-[10px] uppercase">Tech Stack (full description)</label>
+                                            <textarea className="w-full bg-charcoal border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 focus:border-teal focus:outline-none resize-none"
+                                                rows="2"
+                                                value={profileDraft.tech_stack || ''}
+                                                onChange={e => setProfileDraft({...profileDraft, tech_stack: e.target.value})} />
+                                        </div>
+                                        <div>
+                                            <label className="text-gray-400 text-[10px] uppercase">Languages (comma-separated)</label>
+                                            <input className="w-full bg-charcoal border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 focus:border-teal focus:outline-none"
+                                                value={(profileDraft.languages || []).join(', ')}
+                                                onChange={e => setProfileDraft({...profileDraft, languages: e.target.value.split(',').map(s => s.trim()).filter(Boolean)})} />
+                                        </div>
+                                    </div>
+
+                                    <h3 className="text-teal text-xs font-bold uppercase mt-4 mb-3 tracking-wider">Education</h3>
+                                    <div className="space-y-2">
+                                        <div>
+                                            <label className="text-gray-400 text-[10px] uppercase">Degree</label>
+                                            <input className="w-full bg-charcoal border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 focus:border-teal focus:outline-none"
+                                                value={profileDraft.education?.degree || ''}
+                                                onChange={e => setProfileDraft({...profileDraft, education: {...(profileDraft.education || {}), degree: e.target.value}})} />
+                                        </div>
+                                        <div>
+                                            <label className="text-gray-400 text-[10px] uppercase">School</label>
+                                            <input className="w-full bg-charcoal border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 focus:border-teal focus:outline-none"
+                                                value={profileDraft.education?.school || ''}
+                                                onChange={e => setProfileDraft({...profileDraft, education: {...(profileDraft.education || {}), school: e.target.value}})} />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Projects */}
+                                <div className="glass-panel rounded-lg p-4 md:col-span-2">
+                                    <h3 className="text-teal text-xs font-bold uppercase mb-3 tracking-wider">Signature Projects</h3>
+                                    {(profileDraft.projects || []).map((proj, idx) => (
+                                        <div key={idx} className="mb-3 p-3 bg-charcoal rounded border border-gray-700">
+                                            <input className="w-full bg-transparent border-b border-gray-600 text-xs text-white font-bold mb-2 pb-1 focus:border-teal focus:outline-none"
+                                                placeholder="Project name"
+                                                value={proj.name || ''}
+                                                onChange={e => {
+                                                    const updated = [...profileDraft.projects];
+                                                    updated[idx] = {...proj, name: e.target.value};
+                                                    setProfileDraft({...profileDraft, projects: updated});
+                                                }} />
+                                            <textarea className="w-full bg-transparent border border-gray-700 rounded px-2 py-1 text-[11px] text-gray-300 focus:border-teal focus:outline-none resize-none"
+                                                rows="2"
+                                                placeholder="Description"
+                                                value={proj.description || ''}
+                                                onChange={e => {
+                                                    const updated = [...profileDraft.projects];
+                                                    updated[idx] = {...proj, description: e.target.value};
+                                                    setProfileDraft({...profileDraft, projects: updated});
+                                                }} />
+                                            <button onClick={() => {
+                                                const updated = profileDraft.projects.filter((_, i) => i !== idx);
+                                                setProfileDraft({...profileDraft, projects: updated});
+                                            }} className="text-[9px] text-red-400 mt-1 hover:text-red-300">[REMOVE]</button>
+                                        </div>
+                                    ))}
+                                    <button onClick={() => setProfileDraft({...profileDraft, projects: [...(profileDraft.projects || []), {name: '', description: ''}]})}
+                                        className="text-[10px] text-teal hover:text-teal-glow border border-teal/30 px-3 py-1 rounded">
+                                        + Add Project
+                                    </button>
+                                </div>
+
+                                {/* Save Button */}
+                                <div className="md:col-span-2 flex justify-end">
+                                    <button 
+                                        onClick={saveProfileToServer}
+                                        disabled={isSavingProfile}
+                                        className="bg-teal hover:bg-teal-glow text-navy font-bold px-6 py-2 rounded text-xs transition-colors"
+                                    >
+                                        {isSavingProfile ? '> SAVING...' : '> SAVE PROFILE'}
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     )}

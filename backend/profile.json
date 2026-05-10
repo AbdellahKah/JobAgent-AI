@@ -1,0 +1,48 @@
+{
+    "name": "Abdellah Kahlaoui",
+    "title": "Quant Analyst & AI Engineer | Applied Mathematician",
+    "location": "Casablanca, Morocco",
+    "email": "kahlaouiabdellah6@gmail.com",
+    "phone": "+212724458783",
+    "linkedin": "linkedin.com/in/kahabdu1808",
+    "github": "github.com/AbdellahKah/AbdellahKah",
+    "education": {
+        "degree": "M2 Applied Mathematics",
+        "school": "FST Settat",
+        "disciplines": ["Stochastic Calculus", "Statistical Learning", "Numerical Optimization", "Time Series Analysis"]
+    },
+    "skills": [
+        "Stochastic Calculus",
+        "Deep Reinforcement Learning",
+        "Monte Carlo Methods",
+        "Python (PyTorch/NumPy)",
+        "C# (.NET)",
+        "SQL & ETL",
+        "Algorithmic Optimization",
+        "Financial Modeling",
+        "LaTeX"
+    ],
+    "tech_stack": "Python (NumPy, PyTorch, Pandas, Scikit-learn), C#/.NET, SQL, MATLAB, Git, Power BI",
+    "experience": [
+        {
+            "role": "Data Analyst & Full-Stack Developer",
+            "company": "Safran",
+            "duration": "6 months",
+            "highlights": [
+                "Delivered scalable C# desktop applications and REST APIs",
+                "Engineered SQL-to-Power BI ETL pipelines with measurable latency reduction"
+            ]
+        }
+    ],
+    "projects": [
+        {
+            "name": "Neural Volatility Calibration Engine",
+            "description": "Neural network surrogate for Heston & SABR stochastic volatility models. Achieved 1000x inference speedup over classical Monte Carlo methods."
+        },
+        {
+            "name": "DRL Agent for TSP",
+            "description": "Deep Reinforcement Learning agent in PyTorch solving the Travelling Salesman Problem (combinatorial optimization)."
+        }
+    ],
+    "languages": ["French (native)", "English (C1)"]
+}
