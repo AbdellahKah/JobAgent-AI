@@ -206,16 +206,19 @@ const handleGenerate = async (job) => {
                                     <p className="text-teal text-xs mb-2">{job.company} // {job.location}</p>
                                     <p className="text-gray-400 text-xs line-clamp-2 mb-2">{job.desc}</p>
                                     
-                                    {/* NEW: Clickable URL Link */}
+                                    {/* NEW: Clickable URL Link with fallback handling */}
                                     {job.url && (
                                         <a 
                                             href={job.url} 
                                             target="_blank" 
                                             rel="noopener noreferrer" 
-                                            className="text-teal-glow hover:text-white text-[10px] uppercase tracking-widest border-b border-transparent hover:border-white transition-colors"
+                                            className={`text-[10px] uppercase tracking-widest border-b border-transparent hover:border-white transition-colors ${job.url_is_fallback ? 'text-yellow-400 hover:text-white' : 'text-teal-glow hover:text-white'}`}
                                             onClick={(e) => e.stopPropagation()} 
+                                            title={job.url_is_fallback ? "Opens a Google Search for this job (direct link unavailable)" : "Opens the direct job listing page"}
                                         >
-                                            [ Initialize Deployment // View Source ]
+                                            {job.url_is_fallback 
+                                                ? '[ Search on Google // Direct Link Unavailable ]' 
+                                                : '[ Initialize Deployment // View Source ]'}
                                         </a>
                                     )}
                                 </div>

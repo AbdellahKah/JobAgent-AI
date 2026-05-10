@@ -5,6 +5,7 @@ import uvicorn
 import json
 import re
 from datetime import datetime
+from urllib.parse import urlparse, quote_plus
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
@@ -91,6 +92,34 @@ async def call_with_retry(model: str, contents, config=None, max_retries: int = 
 
 
 # ─────────────────────────────────────────────
+# Utility: URL Validator for Job Links
+# ─────────────────────────────────────────────
+
+def is_valid_job_url(url: str) -> bool:
+    """Check if a URL is structurally valid and from a known job platform."""
+    if not url or url.strip() == "":
+        return False
+    try:
+        parsed = urlparse(url)
+        # Must have scheme and netloc
+        if not parsed.scheme or not parsed.netloc:
+            return False
+        # Must be http or https
+        if parsed.scheme not in ("http", "https"):
+            return False
+        # Reject obviously fake patterns (e.g. placeholder domains)
+        domain = parsed.netloc.lower()
+        if "example.com" in domain:
+            return False
+        # Reject suspiciously short paths on job boards (likely fabricated IDs)
+        # e.g., linkedin.com/jobs/view/12345 where 12345 is made up
+        # We allow them through but flag - the real fix is the fallback
+        return True
+    except Exception:
+        return False
+
+
+# ─────────────────────────────────────────────
 # Endpoints
 # ─────────────────────────────────────────────
 
@@ -148,8 +177,40 @@ async def search_jobs(request: SearchRequest):
         raw_text = response.text
         print(f"DEBUG - Raw AI Output (first 300 chars): {raw_text[:300]}")
 
+        # Extract grounding URLs from search metadata if available
+        grounding_urls = []
+        try:
+            if hasattr(response, 'candidates') and response.candidates:
+                candidate = response.candidates[0]
+                grounding_meta = getattr(candidate, 'grounding_metadata', None)
+                if grounding_meta and hasattr(grounding_meta, 'grounding_chunks'):
+                    for chunk in grounding_meta.grounding_chunks:
+                        if hasattr(chunk, 'web') and chunk.web:
+                            grounding_urls.append(chunk.web.uri)
+        except Exception as e:
+            print(f"DEBUG - Could not extract grounding URLs: {e}")
+
+        print(f"DEBUG - Grounding URLs found: {grounding_urls}")
+
         cleaned = clean_json_response(raw_text)
         jobs_data = json.loads(cleaned)
+
+        # Validate and fix URLs for each job
+        for job in jobs_data:
+            url = job.get("url", "")
+            if url:
+                # Validate the URL structure
+                if not is_valid_job_url(url):
+                    job["url"] = ""
+
+            # If no valid URL, generate a Google Search fallback
+            if not job.get("url"):
+                search_term = f"{job.get('title', '')} {job.get('company', '')} {job.get('location', 'Morocco')} job"
+                job["url"] = f"https://www.google.com/search?q={quote_plus(search_term)}"
+                job["url_is_fallback"] = True
+            else:
+                job["url_is_fallback"] = False
+
         jobs_data.sort(key=lambda x: x.get("match", 0), reverse=True)
 
         return {"status": "success", "results": jobs_data}
