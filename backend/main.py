@@ -126,6 +126,81 @@ def build_profile_prompt_block(profile: dict) -> str:
 
 
 # ─────────────────────────────────────────────
+# Utility: Match Score Calibration
+# ─────────────────────────────────────────────
+
+def calibrate_match_score(job: dict, profile: dict) -> dict:
+    """
+    Compute a calibrated match score combining:
+    - Gemini's AI score (subjective relevance)
+    - Keyword overlap score (objective skill matching)
+    
+    Returns dict with: calibrated_score, keyword_score, ai_score, matched_skills
+    """
+    ai_score = job.get("match", 50)
+
+    # Build searchable text from job
+    job_text = f"{job.get('title', '')} {job.get('desc', '')} {job.get('company', '')}".lower()
+
+    # Get profile keywords: skills + tech_stack + education disciplines + project names
+    profile_keywords = []
+    for skill in profile.get("skills", []):
+        profile_keywords.append(skill.lower())
+    
+    # Add tech stack individual items
+    tech_stack = profile.get("tech_stack", "")
+    for item in re.split(r'[,/()]', tech_stack):
+        item = item.strip().lower()
+        if len(item) > 2:
+            profile_keywords.append(item)
+
+    # Add education disciplines
+    for disc in profile.get("education", {}).get("disciplines", []):
+        profile_keywords.append(disc.lower())
+
+    # Add project names as keywords
+    for proj in profile.get("projects", []):
+        name = proj.get("name", "").lower()
+        if name:
+            # Split multi-word project names into individual keywords
+            for word in name.split():
+                if len(word) > 3:
+                    profile_keywords.append(word)
+
+    # Deduplicate
+    profile_keywords = list(set(profile_keywords))
+
+    # Compute keyword overlap
+    matched_skills = []
+    for keyword in profile_keywords:
+        # Check if keyword or any significant part appears in job text
+        if keyword in job_text:
+            matched_skills.append(keyword)
+        else:
+            # Check individual words of multi-word skills (e.g. "Deep Reinforcement Learning")
+            words = keyword.split()
+            if len(words) > 1:
+                significant_matches = sum(1 for w in words if len(w) > 3 and w in job_text)
+                if significant_matches >= len(words) * 0.6:
+                    matched_skills.append(keyword)
+
+    # Keyword score: percentage of profile keywords found in job
+    total_keywords = max(len(profile_keywords), 1)
+    keyword_score = min(100, int((len(matched_skills) / total_keywords) * 150))  # Scale up, cap at 100
+
+    # Hybrid formula: 60% AI score + 40% keyword overlap
+    calibrated_score = int(ai_score * 0.6 + keyword_score * 0.4)
+    calibrated_score = max(0, min(100, calibrated_score))
+
+    return {
+        "calibrated_score": calibrated_score,
+        "keyword_score": keyword_score,
+        "ai_score": ai_score,
+        "matched_skills": matched_skills[:8],  # Top 8 for display
+    }
+
+
+# ─────────────────────────────────────────────
 # Utility: Robust JSON Cleaner
 # ─────────────────────────────────────────────
 
@@ -323,6 +398,18 @@ async def search_jobs(request: SearchRequest):
                 next_id += 1
 
         # Sort: Gemini-scored jobs first, then scraped extras
+        jobs_data.sort(key=lambda x: x.get("match", 0), reverse=True)
+
+        # ─── Calibrate match scores using profile keywords ───
+        profile = load_profile()
+        for job in jobs_data:
+            cal = calibrate_match_score(job, profile)
+            job["ai_score"] = cal["ai_score"]
+            job["keyword_score"] = cal["keyword_score"]
+            job["match"] = cal["calibrated_score"]
+            job["matched_skills"] = cal["matched_skills"]
+
+        # Re-sort by calibrated score
         jobs_data.sort(key=lambda x: x.get("match", 0), reverse=True)
 
         # Flag jobs already saved in the database (deduplication)
